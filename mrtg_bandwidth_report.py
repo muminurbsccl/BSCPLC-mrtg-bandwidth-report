@@ -698,6 +698,17 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
             except Exception:
                 pass
 
+    # --- Section header rows: dark green fill + white bold text ---
+    for row_num in SECTION_HEADER_ROWS:
+        for col_letter in ("A", "B", "C", "D", "E", "F"):
+            hdr_cell = ws[f"{col_letter}{row_num}"]
+            hdr_cell.fill = _FILL_HEADER
+            hdr_cell.font = _FONT_HEADER
+
+    # --- Title row accent: medium bottom border ---
+    for col_letter in ("A", "B", "C", "D", "E", "F"):
+        ws[f"{col_letter}1"].border = _TITLE_BORDER
+
     # --- Fix Cache Total: always write formula (not static value) ---
     ws["E56"] = "=SUM(E54,E55)"
     log.info("  E56 set to =SUM(E54,E55) (Cache Total formula)")
