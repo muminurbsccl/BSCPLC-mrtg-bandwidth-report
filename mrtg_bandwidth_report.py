@@ -629,8 +629,7 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
     log.info(f"Loading template: {template_path}")
     wb = load_workbook(template_path)
     ws = wb.active
-    yellow = _get_yellow_fill()
-    orange = _get_orange_fill()
+    # (fills are module-level constants — no init call needed)
 
     if report_date:
         ws["A1"] = f"Daily Usage Report ({report_date})"
@@ -672,25 +671,19 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
             filled_rows.add(row_ref)
             filled += 1
 
-            # --- Highlighting ---
-            # Yellow = needs human review (exceeds allocation or suspect unit-less result)
-            # Orange = auto-corrected by decimal-drop algorithm (lower priority than yellow)
-            highlight_e = False
-            # Rule 1: Value still exceeds allocated after correction
-            if d_val and d_val > 0 and mbps is not None and mbps > d_val:
-                highlight_e = True
-            # Rule 2: Suspect bps conversion AND result >= 1 Mbps
-            if suspect and mbps is not None and mbps >= 1.0:
-                highlight_e = True
+            # --- Traffic-light fill ---
+            if d_val and d_val > 0 and mbps is not None and mbps >= 0:
+                pct = (mbps / d_val) * 100
+                cell.fill = _pick_e_fill(pct, corrected)
+                fill_label = f"{pct:.0f}%"
+            else:
+                fill_label = "no-alloc"
 
-            if highlight_e:
-                cell.fill = yellow
-            elif corrected:
-                # Auto-corrected but within allocation — flag orange for awareness
-                cell.fill = orange
+            # --- Number format: integer for ≥100 Mbps, 2dp for smaller values ---
+            if isinstance(cell.value, (int, float)) and cell.value is not None:
+                cell.number_format = "#,##0" if cell.value >= 100 else "#,##0.00"
 
-            log.info(f"  {row_ref} = {cell.value}  ({data.get('desc', '')})"
-                     + (" [YELLOW]" if highlight_e else " [ORANGE]" if corrected else ""))
+            log.info(f"  {row_ref} = {cell.value}  ({data.get('desc', '')}) [{fill_label}]")
         except Exception as e:
             log.error(f"  Failed to write {row_ref}: {e}")
 
@@ -700,7 +693,7 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
             try:
                 row_num = int(re.search(r"\d+", row_ref).group())
                 f_cell = ws[f"F{row_num}"]
-                f_cell.fill = yellow
+                f_cell.fill = _FILL_YELLOW
                 log.info(f"  F{row_num} highlighted yellow (no data for {row_ref})")
             except Exception:
                 pass
