@@ -14,8 +14,9 @@ A Python desktop tool that automatically extracts bandwidth usage data from MRTG
 2. **Image Conversion** — Converts each PDF page to high-resolution images using `pdf2image` + Poppler
 3. **OCR Extraction** — Runs Tesseract OCR to extract text from graph images (titles, statistics)
 4. **Stats Parsing** — Parses Inbound/Outbound Maximum values with automatic unit detection (G/M/k/bps)
-5. **Graph-to-Row Mapping** — Matches each graph's client name to the correct spreadsheet row using configurable regex patterns
-6. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet, preserving all formulas
+5. **OCR Correction** — Automatically detects and fixes common OCR decimal-drop errors (e.g. "2.93G" read as "293G") using the allocated bandwidth as a sanity ceiling
+6. **Graph-to-Row Mapping** — Matches each graph's client name to the correct spreadsheet row using configurable regex patterns + fuzzy token matching as fallback
+7. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet with traffic-light colour coding, preserving all existing formulas
 
 ---
 
@@ -37,7 +38,18 @@ The generated Excel report contains Maximum Usage in Mbps for each client, organ
 
 ![Sample Output XLSX](screenshots/sample_output_xlsx.png)
 
-*Green values = normal range, Red values = high usage. Formulas for totals and summaries are preserved from the template.*
+*Cells are colour-coded by utilisation vs allocated bandwidth:*
+
+| Colour | Meaning |
+|--------|---------|
+| Green | ≤ 70% of allocation — healthy |
+| Amber | 71–90% — getting close |
+| Orange | 91–100% — near limit |
+| Red | > 100% — exceeded allocation |
+| Blue | Value was auto-corrected by OCR decimal-drop fix — review advised |
+| Yellow (F col) | No graph matched for this client row |
+
+*Section headers (IIG Clients, ISP Clients, etc.) are styled dark green. Formulas for totals and summaries are preserved from the template.*
 
 ---
 
@@ -164,7 +176,9 @@ This tool uses OCR to read text from graph images, which has inherent limitation
 
 - **Typical accuracy: ~80-90%** of values extracted correctly
 - Unit letters (M/G/k) may be missed or misread by OCR
-- Some graph titles may not match patterns due to OCR artifacts (e.g., `0` read as `@`)
+- Common OCR character substitutions (`@` → `0`, `[` → `I`, `l` → `I`) are automatically corrected before pattern matching
+- **Decimal-drop correction:** Values wildly exceeding allocated bandwidth (>10×) are automatically corrected by dividing until plausible (e.g. 293,000 Mbps → 14,560 Mbps); corrected cells are highlighted blue
+- Some graph titles may not match patterns — unmatched rows are highlighted yellow in the F column as a manual review flag
 - Graphs marked "Could not open!" in the PDF will have no data (this is a Cacti error, not a tool issue)
 
 **Always manually verify the output** against the source PDF before distributing the report.
@@ -176,6 +190,9 @@ This tool uses OCR to read text from graph images, which has inherent limitation
 ```
 mrtg-bandwidth-report/
 ├── mrtg_bandwidth_report.py    # Main script (GUI + CLI)
+├── run.bat                     # Windows launcher (sets Tesseract + Poppler PATH)
+├── tests/
+│   └── test_fill_logic.py      # Unit tests for traffic-light fill logic
 ├── README.md                   # This file
 ├── screenshots/                # Documentation images
 │   ├── gui_screenshot.png

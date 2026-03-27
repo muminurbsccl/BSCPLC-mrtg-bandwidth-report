@@ -14,3 +14,11 @@ venv/
 *.log
 .DS_Store
 Thumbs.db
+
+# Internal planning / tooling docs — never pushed to GitHub
+docs/
+.claude/
+CLAUDE.md
+*.prd.docx
+planning.md
+tasks.md
