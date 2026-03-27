@@ -37,6 +37,7 @@ import shutil
 import logging
 import argparse
 from datetime import datetime
+from difflib import SequenceMatcher
 
 # ---------------------------------------------------------------------------
 # Third-party imports (checked at startup)
@@ -44,6 +45,7 @@ from datetime import datetime
 MISSING_DEPS = []
 try:
     from openpyxl import load_workbook
+    from openpyxl.styles import PatternFill, Font, Border, Side
 except ImportError:
     MISSING_DEPS.append("openpyxl")
 try:
@@ -77,13 +79,13 @@ log = logging.getLogger("mrtg")
 
 GRAPH_TO_ROW_MAP = [
     # ---- IIG Clients (rows 4-28) ----
-    (r"BDHUB.*IIG|BDHUB-15G-IIG", "E4", "BDHUB DHK IIG"),
+    (r"BDHUB.*[IL]IG|BDHUB-LIG|BDHUB-15G-IIG", "E4", "BDHUB DHK IIG"),
     (r"Equitel|EQUITEL", "E5", "Equitel DHK"),
     (r"Skytel.*DC|Skytel.*PRIMARY|Skytel.*IIG.*PRI", "E6", "Skytel Primary"),
     (r"Skytel.*TEJ|Skytel.*SECONDARY|Skytel.*IIG.*SEC", "E7", "Skytel Secondary"),
     (r"PEEREX.*TEJ\b|PEEREX-TEJ", "E8", "Peerex DHK"),
     (r"PEEREX.*9\.?5G|PEEREX-9", "E9", "Peerex Cox-9500"),
-    (r"PEEREX.*COX.*0[2z]|PEEREX-COX-0[2z]", "E10", "Peerex Cox-3432"),
+    (r"PEEREX.*COX.*[0@][2z]|PEEREX-COX-[0@][2z]", "E10", "Peerex Cox-3432"),
     (r"F.H.*KKT.*BE|FAH.*KKT|F@H.*KKT", "E11", "F@Home KKT"),
     (r"NOVOCOM|Novocom", "E12", "NOVOCOM DHK"),
     (r"WINDSTREAM.*IIG|Windstream.*IIG", "E13", "Windstream COX IIG"),
@@ -96,6 +98,7 @@ GRAPH_TO_ROW_MAP = [
     (r"INTRAGLOBE.*IPT|Intraglobe.*IPT", "E20", "Intraglobe KKT IIG"),
     (r"GMax-IPT|GMAX.*IPT|GMax.*IPT", "E21", "Green Max COX IIG"),
     (r"BD.?LINK.*(?:IIG|DC)|BDLINK.*DC", "E22", "BD-LINK DHK"),
+    (r"ADNGateway.*SEC|ADN.*Gateway.*SEC|ADN.*GW.*SEC", "E24", "ADN-GW DHK-Secondary"),
     (r"ADNGateway|ADN.*Gateway", "E23", "ADN-GW DHK-Primary"),
     (r"REGO.COX.IIG|REGO_COX_IIG|REGO.*COX.*IIG", "E25", "Rego COX IIG"),
     (r"REGO-IIG|REGO.*IIG(?!.*COX)", "E26", "Rego KKT IIG"),
@@ -104,6 +107,7 @@ GRAPH_TO_ROW_MAP = [
 
     # ---- ISP Clients (rows 31-51) ----
     (r"ADN.*DHK.*ISP|ADN-DhakaColo|ADN.*DhakaColo|ADN.*DC(?!.*LD)", "E31", "ADN DHK-Primary"),
+    (r"ADN.*DHK.*SEC|ADN.*DhakaColo.*SEC", "E32", "ADN DHK-Secondary"),
     (r"TELET.LK.*MOG|Teletalk.*PRI.*DHK|TELETALK.*PRI.*DHK|Teletalk.*MOG", "E33", "Teletalk DHK-Primary"),
     (r"Telet.lk.*CTG.*Sec|TELET.LK.*CTG.*Sec|Teltatalk.*CTG.*Sec", "E35", "Teletalk CTG-Secondary"),
     (r"Teletalk.*PRI.*CTG|TELETALK.*PRI.*CTG|Teletalk.*CTG(?!.*Sec)", "E34", "Teletalk CTG-Primary"),
@@ -127,6 +131,7 @@ GRAPH_TO_ROW_MAP = [
     (r"Exabyte.*Cloudflare.*TEJ", "E54", "Exabyte Cache TEJ"),
     (r"EDGENEXT.*CLOUD|BE-EDGENEXT", "E54", "Exabyte Cache (EDGENEXT)"),
     (r"Exabyte.*Cloudflare.*DC", "E54", "Exabyte Cache DC"),
+    (r"SS.?Online.*Cache|SSOnline.*Cloudflare|SS.?Online.*CDN", "E55", "SS Online Cache DHK"),
 
     # ---- LD Clients (rows 58-67) ----
     (r"DELTA.LD|Delta.LD", "E58", "Delta COX LD"),
@@ -159,6 +164,9 @@ FALLBACK_MAP = [
     (r"Telnet-DC|Telnet.*DC", "E50", "Telnet Dhk-Colo (DC)"),
     (r"SSOnline-DC|SS.?Online.*DC", "E39", "SS Online DHK (DC)"),
     (r"BDLINK|BD.LINK(?!.*LD)", "E22", "BD-LINK DHK (simple)"),
+    (r"BDHUB.LIG", "E4", "BDHUB DHK IIG (LIG OCR)"),
+    (r"PEEREX.*COX.*@[2z]", "E10", "Peerex Cox-3432 (@2 OCR)"),
+    (r"Windstrem.*I.PT|Windstrem.*\[PT", "E13", "Windstream COX IIG (OCR)"),
 ]
 
 
@@ -231,75 +239,62 @@ def parse_graphs_from_text(text: str) -> list:
         search_end = min(ti + 30, next_ti)
         search_block = "\n".join(lines[ti:search_end])
 
-        in_max = _extract_maximum(search_block, "Inbound")
-        out_max = _extract_maximum(search_block, "Outbound")
+        in_max, in_unitless = _extract_maximum(search_block, "Inbound")
+        out_max, out_unitless = _extract_maximum(search_block, "Outbound")
 
         graphs.append({
             "title": title,
             "inbound_max": in_max,
             "outbound_max": out_max,
+            "suspect": (in_unitless or out_unitless),
         })
 
     return graphs
 
 
-def _extract_maximum(text_block: str, direction: str) -> float:
+def _extract_maximum(text_block: str, direction: str) -> tuple:
     """
     Extract the Maximum value for Inbound or Outbound from a text block.
-
-    Handles OCR quirks: "Max1mum", "Maximun", "Maxinum" etc.
-    Handles units: G, M, k, or plain bps.
-    Handles -nan values.
+    Returns (value_in_mbps, is_unitless) or (None, False) if not found.
     """
-    # Find lines containing the direction keyword
     for line in text_block.split("\n"):
         if not re.search(rf"\b{direction}\b", line, re.I):
             continue
-
-        # Sometimes stats wrap to next line, so we also grab surrounding text
-        # Look for Maximum: <value> [unit]
-        # OCR can produce: "Max1mum:", "Maximum:", "Maximun:", etc.
         pat = r"Max\w*[:\s]+\s*([-\d.,]+)\s*([GgMmKk]?)\b"
         match = re.search(pat, line, re.I)
         if match:
             val_str = match.group(1).strip()
             unit = match.group(2).strip()
-
             if "nan" in val_str.lower():
-                return 0.0
-
+                return 0.0, False
             try:
                 val = float(val_str.replace(",", ""))
             except ValueError:
                 continue
+            return convert_to_mbps(val, unit), (unit == "")
 
-            return convert_to_mbps(val, unit)
-
-    # Try a broader search across all lines with Maximum
     lines = text_block.split("\n")
     for i, line in enumerate(lines):
         if re.search(rf"\b{direction}\b", line, re.I):
-            # Check this line and the next 2 combined
             combined = line
             if i + 1 < len(lines):
                 combined += " " + lines[i + 1]
             if i + 2 < len(lines):
                 combined += " " + lines[i + 2]
-
             pat = r"Max\w*[:\s]+\s*([-\d.,]+)\s*([GgMmKk]?)\b"
             match = re.search(pat, combined, re.I)
             if match:
                 val_str = match.group(1).strip()
                 unit = match.group(2).strip()
                 if "nan" in val_str.lower():
-                    return 0.0
+                    return 0.0, False
                 try:
                     val = float(val_str.replace(",", ""))
                 except ValueError:
                     continue
-                return convert_to_mbps(val, unit)
+                return convert_to_mbps(val, unit), (unit == "")
 
-    return None
+    return None, False
 
 
 def convert_to_mbps(value: float, unit: str) -> float:
@@ -320,17 +315,44 @@ def convert_to_mbps(value: float, unit: str) -> float:
     elif u == "K":
         return round(value / 1000, 4)
     else:
-        # Plain bps — if value is already large (>1000), assume it's already in Mbps-scale
-        # This handles OCR edge cases where the unit letter wasn't captured
-        if value > 100000:
-            return round(value / 1_000_000, 2)
-        elif value > 1000:
-            # Ambiguous — could be bps or Mbps without unit
-            # Heuristic: if value fits expected Mbps range, keep as-is
-            return round(value, 2)
-        else:
-            # Small number without unit — likely already correct or bps
-            return round(value, 4)
+        # No unit captured — treat as raw bps per user policy.
+        # MRTG unit-less values are in bits/second; convert to Mbps.
+        return round(value / 1_000_000, 6)
+
+
+# Curated fuzzy token lookup for common OCR-garbled titles
+_FUZZY_TOKEN_MAP = [
+    ({"BDHUB", "LIG"},             "E4",  "BDHUB DHK IIG (fuzzy)"),
+    ({"BDHUB", "IIG"},             "E4",  "BDHUB DHK IIG (fuzzy)"),
+    ({"PEEREX", "COX", "02"},      "E10", "Peerex Cox-3432 (fuzzy)"),
+    ({"PEEREX", "COX", "0"},       "E10", "Peerex Cox-3432 (fuzzy-@)"),
+    ({"WINDSTREM", "IPT"},         "E13", "Windstream COX IIG (fuzzy)"),
+    ({"WINDSTREM", "IIPT"},        "E13", "Windstream COX IIG (fuzzy-[)"),
+    ({"WINDSTREAM", "IPT"},        "E13", "Windstream COX IIG (fuzzy)"),
+    ({"ADN", "GATEWAY", "SEC"},    "E24", "ADN-GW DHK-Secondary (fuzzy)"),
+    ({"ADN", "GATEWAY"},           "E23", "ADN-GW DHK-Primary (fuzzy)"),
+    ({"CORONET", "LD"},            "E60", "Coronet COX LD (fuzzy)"),
+    ({"CORONET", "IPT"},           "E19", "Coronet COX IIG (fuzzy)"),
+    ({"DELTA", "LD"},              "E58", "Delta COX LD (fuzzy)"),
+    ({"DELTA", "IPT"},             "E17", "Delta COX IIG (fuzzy)"),
+]
+
+def _fuzzy_match(title: str) -> tuple:
+    """Token-overlap fuzzy matching as last resort."""
+    title_tokens = set(re.findall(r"[A-Z0-9]+", title.upper()))
+    best_score = 0.0
+    best_row = None
+    best_desc = None
+    for required_tokens, row, desc in _FUZZY_TOKEN_MAP:
+        if not required_tokens:
+            continue
+        overlap = len(required_tokens & title_tokens)
+        score = overlap / len(required_tokens)
+        if score >= 0.8 and score > best_score:
+            best_score = score
+            best_row = row
+            best_desc = desc
+    return best_row, best_desc
 
 
 def match_graph_to_row(title: str) -> tuple:
@@ -349,6 +371,8 @@ def match_graph_to_row(title: str) -> tuple:
 
     # Clean OCR artifacts
     clean_title = re.sub(r"[|!]", "l", title)
+    clean_title = re.sub(r"@", "0", clean_title)   # @ → 0 (common OCR)
+    clean_title = re.sub(r"\[", "I", clean_title)   # [ → I (common OCR)
     clean_title = re.sub(r"\s+", " ", clean_title)
 
     # Extract client keyword
@@ -368,6 +392,11 @@ def match_graph_to_row(title: str) -> tuple:
     for pattern, row, desc in FALLBACK_MAP:
         if re.search(pattern, clean_title, re.I):
             return row, desc
+
+    # Last resort: fuzzy token-overlap matching
+    row_ref, desc = _fuzzy_match(clean_title)
+    if row_ref:
+        return row_ref, desc
 
     return None, None
 
@@ -433,7 +462,14 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
             if row_ref:
                 # Keep the larger value if duplicate
                 if row_ref not in results or max_mbps > results[row_ref]["mbps"]:
-                    results[row_ref] = {"mbps": max_mbps, "title": g["title"], "desc": desc}
+                    results[row_ref] = {
+                        "mbps": max_mbps,
+                        "in_mbps": in_max,
+                        "out_mbps": out_max,
+                        "title": g["title"],
+                        "desc": desc,
+                        "suspect": g.get("suspect", False),
+                    }
                 log.info(f"  MATCH: {desc} -> {row_ref} = {max_mbps:.2f} Mbps")
             else:
                 unmatched.append(info)
@@ -452,30 +488,226 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
 # SECTION 4 — XLSX GENERATION
 # =====================================================================
 
+def _correct_value_pair(in_mbps: float, out_mbps: float, allocated: float, suspect: bool) -> tuple:
+    """
+    Auto-correct OCR decimal-drop errors using allocated bandwidth as sanity ceiling.
+
+    Two failure modes handled:
+      HIGH: OCR drops decimal in a G/M value  e.g. "2.93G" read as "293G" = 293,000 Mbps
+            Fix: divide by 10/100/1000 until value <= allocated * 1.5
+      LOW:  OCR drops decimal AND unit (unitless bps-rule applied)
+            e.g. "37.294M" read as "37294" (no unit) -> /1M bps rule -> 0.037 Mbps
+            Fix: reinterpret raw OCR number as kbps -> Mbps
+
+    Correction is applied independently to inbound and outbound, so the correct
+    value from one direction is not lost when the other direction is wrong.
+
+    Returns: (corrected_in, corrected_out, was_corrected: bool)
+    """
+    if not allocated or allocated <= 0:
+        return in_mbps, out_mbps, False
+
+    ceiling = allocated * 1.5   # allow up to 50% burst above allocated
+    floor_ratio = 0.005          # < 0.5% of allocated = suspect (only when bps-converted)
+
+    def fix_high(val):
+        # Only correct values that are clearly impossible: > 10x the allocated bandwidth.
+        # Values between 1.5x–10x are flagged yellow but not auto-corrected (may be legitimate
+        # bursts or downgrade scenarios where the link still carries legacy traffic).
+        if val is None or val <= allocated * 10:
+            return val, False
+        for div in (10, 100, 1000, 10000):
+            candidate = round(val / div, 2)
+            if candidate <= ceiling:
+                log.info(f"    [AUTO-CORRECT] Decimal-drop (high): {val:.2f} -> {candidate:.2f} Mbps (÷{div})")
+                return candidate, True
+        return val, False
+
+    def fix_low(val, is_suspect):
+        if val is None or not is_suspect or allocated <= 10:
+            return val, False
+        if val >= allocated * floor_ratio:
+            return val, False
+        # Reverse the /1M bps rule to recover the original OCR integer.
+        raw = val * 1_000_000
+        # Attempt 1: raw is already Mbps (OCR dropped the 'M' unit but kept correct digits)
+        # e.g. "751 M" -> OCR reads "751" -> bps -> raw=751 -> direct Mbps: 751
+        if 0 < raw <= ceiling:
+            log.info(f"    [AUTO-CORRECT] Decimal-drop (low): {val:.6f} -> {raw:.3f} Mbps (direct Mbps)")
+            return round(raw, 3), True
+        # Attempt 2: raw is in kbps (OCR dropped decimal, e.g. "37.294 M" -> "37294" -> bps -> raw=37294 -> /1000=37.294)
+        candidate = round(raw / 1000, 3)
+        if 0 < candidate <= ceiling:
+            log.info(f"    [AUTO-CORRECT] Decimal-drop (low): {val:.6f} -> {candidate:.3f} Mbps (kbps reinterpret)")
+            return candidate, True
+        return val, False
+
+    new_in,  fixed_in  = fix_high(in_mbps)
+    if not fixed_in:
+        new_in,  fixed_in  = fix_low(in_mbps,  suspect)
+
+    new_out, fixed_out = fix_high(out_mbps)
+    if not fixed_out:
+        new_out, fixed_out = fix_low(out_mbps, suspect)
+
+    return new_in, new_out, (fixed_in or fixed_out)
+
+
+# ---------------------------------------------------------------------------
+# Fill / font / border constants  (8-char ARGB = fully opaque)
+# ---------------------------------------------------------------------------
+
+# Traffic-light fills for E column (utilization-based)
+_FILL_GREEN  = PatternFill(start_color="FF92D050", fill_type="solid")  # ≤70%  healthy
+_FILL_AMBER  = PatternFill(start_color="FFFFC000", fill_type="solid")  # 71–90% caution
+_FILL_ORANGE = PatternFill(start_color="FFFF6600", fill_type="solid")  # 91–100% warning
+_FILL_RED    = PatternFill(start_color="FFFF0000", fill_type="solid")  # >100% exceeded
+_FILL_BLUE   = PatternFill(start_color="FF9DC3E6", fill_type="solid")  # OCR auto-corrected
+
+# F column — unmatched row (no graph found for this client)
+_FILL_YELLOW = PatternFill(start_color="FFFFFF00", fill_type="solid")  # opaque yellow
+
+# Section header rows (rows 3, 30, 53, 57)
+_FILL_HEADER = PatternFill(start_color="FF375623", fill_type="solid")  # dark green
+_FONT_HEADER = Font(name="Calibri", size=11, bold=True, color="FFFFFFFF")  # white bold
+
+# Title row (row 1) accent — medium bottom border
+_TITLE_BORDER = Border(bottom=Side(style="medium"))
+
+
+def _pick_e_fill(pct: float, corrected: bool):
+    """
+    Return the traffic-light fill for an E-column cell.
+
+    Args:
+        pct:       (mbps / allocated_mbps) * 100  — utilization percentage
+        corrected: True if the value was auto-corrected by the OCR decimal-drop fix
+
+    Priority:
+        > 100% → always red (over allocation), regardless of correction
+        91–100% → orange
+        71–90%  → amber
+        ≤ 70% + corrected → blue  (within safe range but OCR-touched, flag for awareness)
+        ≤ 70%             → green
+    """
+    if pct > 100:
+        return _FILL_RED
+    if pct > 90:
+        return _FILL_ORANGE
+    if pct > 70:
+        return _FILL_AMBER
+    if corrected:
+        return _FILL_BLUE
+    return _FILL_GREEN
+
+
+# Section header rows — these rows get dark-green fill + white bold font
+SECTION_HEADER_ROWS = {3, 30, 53, 57}
+
+
+# All E-column rows expected to be filled (used to detect unfilled rows)
+EXPECTED_E_ROWS = (
+    [f"E{i}" for i in range(4, 29)] +
+    [f"E{i}" for i in range(31, 52)] +
+    ["E54", "E55"] +
+    [f"E{i}" for i in range(58, 68)]
+)
+
+
 def generate_report(template_path: str, extraction_data: dict, output_path: str, report_date: str = None):
     """
     Load template xlsx, fill in E-column values, update title date, save output.
+
+    Highlighting rules:
+    - E cell -> yellow if extracted value exceeds column D allocated bandwidth
+    - E cell -> yellow if value was extracted without a unit (suspect bps conversion)
+      and the result is >= 1.0 Mbps (suspicious after bps conversion)
+    - E cell -> orange if value was auto-corrected by decimal-drop algorithm (review advised)
+    - F cell -> yellow if the row was not filled at all (unmatched/missing graph)
+    - E56 -> always set to formula =SUM(E54,E55) (Cache Total)
     """
     log.info(f"Loading template: {template_path}")
     wb = load_workbook(template_path)
     ws = wb.active
+    yellow = _get_yellow_fill()
+    orange = _get_orange_fill()
 
     if report_date:
         ws["A1"] = f"Daily Usage Report ({report_date})"
 
+    filled_rows = set()
     filled = 0
+
     for row_ref, data in extraction_data.items():
         mbps = data["mbps"]
+        suspect = data.get("suspect", False)
         try:
             cell = ws[row_ref]
+            row_num = int(re.search(r"\d+", row_ref).group())
+
+            # --- Read allocated bandwidth (column D) — skip formula cells ---
+            d_raw = ws[f"D{row_num}"].value
+            d_val = d_raw if isinstance(d_raw, (int, float)) else None
+
+            # --- Auto-correct decimal-drop OCR errors using allocated bandwidth ---
+            corrected = False
+            if d_val and d_val > 0:
+                in_mbps  = data.get("in_mbps",  mbps) or 0.0
+                out_mbps = data.get("out_mbps", mbps) or 0.0
+                new_in, new_out, corrected = _correct_value_pair(
+                    in_mbps, out_mbps, d_val, suspect
+                )
+                if corrected:
+                    mbps = max(
+                        (v for v in [new_in, new_out] if v is not None and v >= 0),
+                        default=0.0,
+                    )
+
+            # --- Write value ---
             if mbps is not None and mbps > 0:
                 cell.value = round(mbps, 2) if mbps < 100 else round(mbps)
             elif mbps == 0:
                 cell.value = 0
+
+            filled_rows.add(row_ref)
             filled += 1
-            log.info(f"  {row_ref} = {cell.value}  ({data.get('desc', '')})")
+
+            # --- Highlighting ---
+            # Yellow = needs human review (exceeds allocation or suspect unit-less result)
+            # Orange = auto-corrected by decimal-drop algorithm (lower priority than yellow)
+            highlight_e = False
+            # Rule 1: Value still exceeds allocated after correction
+            if d_val and d_val > 0 and mbps is not None and mbps > d_val:
+                highlight_e = True
+            # Rule 2: Suspect bps conversion AND result >= 1 Mbps
+            if suspect and mbps is not None and mbps >= 1.0:
+                highlight_e = True
+
+            if highlight_e:
+                cell.fill = yellow
+            elif corrected:
+                # Auto-corrected but within allocation — flag orange for awareness
+                cell.fill = orange
+
+            log.info(f"  {row_ref} = {cell.value}  ({data.get('desc', '')})"
+                     + (" [YELLOW]" if highlight_e else " [ORANGE]" if corrected else ""))
         except Exception as e:
             log.error(f"  Failed to write {row_ref}: {e}")
+
+    # --- Highlight F cell yellow for rows that were NOT filled ---
+    for row_ref in EXPECTED_E_ROWS:
+        if row_ref not in filled_rows:
+            try:
+                row_num = int(re.search(r"\d+", row_ref).group())
+                f_cell = ws[f"F{row_num}"]
+                f_cell.fill = yellow
+                log.info(f"  F{row_num} highlighted yellow (no data for {row_ref})")
+            except Exception:
+                pass
+
+    # --- Fix Cache Total: always write formula (not static value) ---
+    ws["E56"] = "=SUM(E54,E55)"
+    log.info("  E56 set to =SUM(E54,E55) (Cache Total formula)")
 
     wb.save(output_path)
     log.info(f"Report saved: {output_path} ({filled} cells filled)")
