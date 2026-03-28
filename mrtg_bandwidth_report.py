@@ -275,7 +275,7 @@ def _extract_maximum(text_block: str, direction: str) -> tuple:
     for line in text_block.split("\n"):
         if not re.search(_direction_pattern(direction), line, re.I):
             continue
-        pat = r"Max\w*[:\s]+\s*([-\d.,]+)\s*([GgMmKk]?)(?:bps)?\b"
+        pat = r"Max\w*[:\s]+([-\d.,]+)\s*([GgMmKk]?)(?:bps)?\b"
         match = re.search(pat, line, re.I)
         if match:
             val_str = match.group(1).strip()
@@ -296,7 +296,7 @@ def _extract_maximum(text_block: str, direction: str) -> tuple:
                 combined += " " + lines[i + 1]
             if i + 2 < len(lines):
                 combined += " " + lines[i + 2]
-            pat = r"Max\w*[:\s]+\s*([-\d.,]+)\s*([GgMmKk]?)(?:bps)?\b"
+            pat = r"Max\w*[:\s]+([-\d.,]+)\s*([GgMmKk]?)(?:bps)?\b"
             match = re.search(pat, combined, re.I)
             if match:
                 val_str = match.group(1).strip()
