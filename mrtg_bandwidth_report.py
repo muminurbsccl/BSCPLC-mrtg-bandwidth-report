@@ -126,7 +126,7 @@ GRAPH_TO_ROW_MAP = [
     (r"BDREN.*Equinix|BDREN.*CC.*Equinix", "E48", "BDREN DHK (Equinix)"),
     (r"Race.?Online|RACE.?ONLINE", "E49", "Race Online Ltd"),
     (r"Telnet.*ICT|TELNET.*ICT|Telnet.*DC|Telnet-DC", "E50", "Telnet Dhk-Colo"),
-    (r"C0RONET-CTG|CORONET-CTG.*(?!IPT)", "E19", "Coronet (CTG fallback)"),
+    (r"C0RONET-CTG|CORONET-CTG(?!.*IPT)", "E19", "Coronet (CTG fallback)"),
 
     # ---- Cache (rows 54-55) ----
     (r"Exabyte.*Cloudflare.*TEJ", "E54", "Exabyte Cache TEJ"),
@@ -264,7 +264,7 @@ def _direction_pattern(direction: str) -> str:
     """Build an OCR-tolerant regex for 'Inbound' or 'Outbound'."""
     if direction.lower() == "inbound":
         return r"\b[IiLl1][Nn]\s*[Bb][Oo][Uu][Nn][Dd]"
-    return r"\b[OoO0Qq][Uu][Tt]\s*[Bb][Oo][Uu][Nn][Dd]"
+    return r"\b[Oo0Qq][Uu][Tt]\s*[Bb][Oo][Uu][Nn][Dd]"
 
 
 def _extract_maximum(text_block: str, direction: str) -> tuple:
@@ -344,8 +344,10 @@ _FUZZY_TOKEN_MAP = [
     ({"SKYTEL", "PRI"},            "E6",  "Skytel Primary (fuzzy)"),
     ({"SKYTEL", "SEC"},            "E7",  "Skytel Secondary (fuzzy)"),
     ({"PEEREX", "TEJ"},            "E8",  "Peerex DHK (fuzzy)"),
+    ({"PEEREX", "9500"},           "E9",  "Peerex Cox-9500 (fuzzy)"),
     ({"PEEREX", "COX", "02"},      "E10", "Peerex Cox-3432 (fuzzy)"),
     ({"PEEREX", "COX", "0"},       "E10", "Peerex Cox-3432 (fuzzy-@)"),
+    ({"FAHOME", "KKT"},            "E11", "F@Home KKT (fuzzy)"),
     ({"NOVOCOM"},                   "E12", "NOVOCOM DHK (fuzzy)"),
     ({"WINDSTREM", "IPT"},         "E13", "Windstream COX IIG (fuzzy)"),
     ({"WINDSTREM", "IIPT"},        "E13", "Windstream COX IIG (fuzzy-[)"),
@@ -541,7 +543,7 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
                 # Keep the larger value if duplicate (skip zero-value extraction failures)
                 if extraction_failed and row_ref in results:
                     log.info(f"  SKIP (extraction failed, keeping existing): {desc} -> {row_ref}")
-                elif row_ref in _SUM_CELLS and row_ref in results:
+                elif row_ref in _SUM_CELLS and row_ref in results and not extraction_failed:
                     # Accumulate (SUM) for cells that aggregate multiple graphs
                     results[row_ref]["mbps"] += max_mbps
                     results[row_ref]["in_mbps"] += in_max
