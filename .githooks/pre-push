@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# pre-push: block forbidden files and Claude attribution in commits being pushed.
+
+ERRORS=0
+
+FORBIDDEN=(
+    "(^|/)CLAUDE\.md$"
+    "(^|/)AGENTS\.md$"
+    "(^|/)planning\.md$"
+    "(^|/)tasks\.md$"
+    "\.prd\.docx$"
+    "(^|/)\.omc/"
+    "(^|/)\.serena/"
+    "(^|/)\.env$"
+    "(^|/)\.env\."
+    "(^|/)credentials\.(json|yaml|yml|txt|ini|cfg)$"
+    "(^|/)secrets\.(json|yaml|yml|txt|ini|cfg)$"
+)
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Skip branch deletions
+    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        # New branch — check full history up to this sha
+        RANGE="$local_sha"
+        FILES=$(git show --name-only --format="" "$local_sha")
+        MESSAGES=$(git show --format="%B" -s "$local_sha")
+    else
+        RANGE="${remote_sha}..${local_sha}"
+        FILES=$(git diff --name-only "$RANGE" 2>/dev/null)
+        MESSAGES=$(git log --format="%B" "$RANGE" 2>/dev/null)
+    fi
+
+    # ── 1. Forbidden files in the push range ─────────────────────────────────
+    for pattern in "${FORBIDDEN[@]}"; do
+        hits=$(printf '%s\n' "$FILES" | grep -E "$pattern" || true)
+        if [ -n "$hits" ]; then
+            echo "PUSH BLOCKED: Forbidden file(s) in commits being pushed:"
+            printf '%s\n' "$hits" | sed 's/^/  /'
+            ERRORS=$((ERRORS + 1))
+        fi
+    done
+
+    # ── 2. Claude/Anthropic co-author in commit messages ─────────────────────
+    if printf '%s\n' "$MESSAGES" | grep -qiE "Co-Authored-By:[^\n]*(Claude|Anthropic|Sonnet|Opus|Haiku|claude-code|noreply@anthropic)"; then
+        echo "PUSH BLOCKED: Claude/Anthropic co-author attribution found in commits being pushed."
+        echo "Offending message excerpt:"
+        printf '%s\n' "$MESSAGES" | grep -iE "Co-Authored-By:[^\n]*(Claude|Anthropic|Sonnet|Opus|Haiku|claude-code|noreply@anthropic)" | head -3 | sed 's/^/  /'
+        ERRORS=$((ERRORS + 1))
+    fi
+done
+
+if [ "$ERRORS" -gt 0 ]; then
+    echo ""
+    echo "$ERRORS check(s) failed. Push aborted."
+    exit 1
+fi
+
+exit 0

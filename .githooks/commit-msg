@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# commit-msg: block Claude/Anthropic AI co-author attribution in commit messages.
+
+MSG=$(cat "$1")
+
+if echo "$MSG" | grep -qiE "Co-Authored-By:[^\n]*(Claude|Anthropic|Sonnet|Opus|Haiku|claude-code|noreply@anthropic)"; then
+    echo ""
+    echo "COMMIT BLOCKED: Claude/Anthropic co-author attribution detected."
+    echo "Remove the following line(s) from the commit message:"
+    echo "$MSG" | grep -iE "Co-Authored-By:[^\n]*(Claude|Anthropic|Sonnet|Opus|Haiku|claude-code|noreply@anthropic)"
+    echo ""
+    exit 1
+fi
+
+exit 0

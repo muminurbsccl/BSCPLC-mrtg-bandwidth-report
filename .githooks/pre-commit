@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# pre-commit: block forbidden files and secrets/credentials in staged changes.
+
+ERRORS=0
+
+# ── 1. Forbidden files ────────────────────────────────────────────────────────
+# Files that must never be committed regardless of content.
+FORBIDDEN=(
+    "(^|/)CLAUDE\.md$"
+    "(^|/)AGENTS\.md$"
+    "(^|/)planning\.md$"
+    "(^|/)tasks\.md$"
+    "\.prd\.docx$"
+    "(^|/)\.omc/"
+    "(^|/)\.serena/"
+    "(^|/)\.env$"
+    "(^|/)\.env\."
+    "(^|/)credentials\.(json|yaml|yml|txt|ini|cfg)$"
+    "(^|/)secrets\.(json|yaml|yml|txt|ini|cfg)$"
+    "\.pem$"
+    "_rsa$"
+    "_dsa$"
+    "_ecdsa$"
+    "_ed25519$"
+)
+
+STAGED_FILES=$(git diff --cached --name-only)
+
+for pattern in "${FORBIDDEN[@]}"; do
+    hits=$(printf '%s\n' "$STAGED_FILES" | grep -E "$pattern" || true)
+    if [ -n "$hits" ]; then
+        echo "COMMIT BLOCKED: Forbidden file(s) staged for commit:"
+        printf '%s\n' "$hits" | sed 's/^/  /'
+        ERRORS=$((ERRORS + 1))
+    fi
+done
+
+# ── 2. Secret / credential patterns in staged content ─────────────────────────
+SECRET_PATTERNS=(
+    # Private keys
+    "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY"
+    # Generic password / secret assignments
+    "(password|passwd|secret)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{6,}"
+    # API key assignments
+    "(api[_-]?key|apikey|api[_-]?secret|auth[_-]?token)[[:space:]]*[:=][[:space:]]*['\"][^'\"]{8,}"
+    # AWS access key ID
+    "AKIA[0-9A-Z]{16}"
+    # Anthropic / OpenAI style keys
+    "(sk|ant)-[a-zA-Z0-9_-]{20,}"
+    # GitHub personal access token
+    "ghp_[a-zA-Z0-9]{36}"
+    "github_pat_[a-zA-Z0-9_]{82}"
+    # Slack token
+    "xox[baprs]-[0-9A-Za-z-]+"
+    # Generic long hex/base64 that looks like a key assigned to a variable
+    "(token|secret|key|password)[[:space:]]*[:=][[:space:]]*['\"][0-9a-fA-F]{32,}['\"]"
+)
+
+for file in $STAGED_FILES; do
+    [ -f "$file" ] || continue
+    # Only scan text-like files (skip known binary extensions)
+    case "$file" in
+        *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf|*.zip|*.tar|*.gz|*.exe|*.dll|*.pyc|*.xlsx|*.docx)
+            continue ;;
+    esac
+
+    DIFF=$(git diff --cached -- "$file")
+    for pattern in "${SECRET_PATTERNS[@]}"; do
+        if printf '%s\n' "$DIFF" | grep "^+" | grep -qE -- "$pattern"; then
+            echo "COMMIT BLOCKED: Possible secret/credential in '$file' (matched: $pattern)"
+            ERRORS=$((ERRORS + 1))
+        fi
+    done
+done
+
+# ── Result ────────────────────────────────────────────────────────────────────
+if [ "$ERRORS" -gt 0 ]; then
+    echo ""
+    echo "$ERRORS check(s) failed. Fix the issues above and try again."
+    exit 1
+fi
+
+exit 0
