@@ -796,6 +796,8 @@ def run_gui():
             self.report_date = tk.StringVar(value=datetime.now().strftime("%d %B %Y"))
             self.dpi = tk.IntVar(value=250)
             self.running = False
+            self._output_manually_set = False  # True only when user explicitly Browses Output
+            self.report_date.trace_add("write", self._on_date_changed)
             self._build_ui()
 
         def _build_ui(self):
@@ -858,15 +860,26 @@ def run_gui():
             self.log_text = scrolledtext.ScrolledText(lf, height=14, font=("Courier", 9))
             self.log_text.pack(fill=tk.BOTH, expand=True)
 
+        def _auto_output_path(self):
+            """Return the auto-generated output path based on current PDF dir + report date."""
+            pdf = self.pdf_path.get()
+            if not pdf:
+                return ""
+            d = self.report_date.get().strip()
+            return os.path.join(os.path.dirname(pdf), f"Bandwidth Report (MAX) For {d}.xlsx")
+
+        def _on_date_changed(self, *_):
+            """Keep auto-generated output filename in sync when date field changes."""
+            if not self._output_manually_set:
+                self.output_path.set(self._auto_output_path())
+
         def _browse_pdf(self):
             p = filedialog.askopenfilename(title="Select Input PDF",
                                            filetypes=[("PDF", "*.pdf"), ("All", "*.*")])
             if p:
                 self.pdf_path.set(p)
-                if not self.output_path.get():
-                    d = self.report_date.get()
-                    self.output_path.set(os.path.join(os.path.dirname(p),
-                                                      f"Bandwidth Report (MAX) For {d}.xlsx"))
+                self._output_manually_set = False  # reset — auto mode
+                self.output_path.set(self._auto_output_path())
 
         def _browse_template(self):
             p = filedialog.askopenfilename(title="Select Template XLSX",
@@ -878,6 +891,7 @@ def run_gui():
             p = filedialog.asksaveasfilename(title="Save Output As", defaultextension=".xlsx",
                                              filetypes=[("Excel", "*.xlsx"), ("All", "*.*")])
             if p:
+                self._output_manually_set = True  # user took control of path
                 self.output_path.set(p)
 
         def _log(self, msg):
