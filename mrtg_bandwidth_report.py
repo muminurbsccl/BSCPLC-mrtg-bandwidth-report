@@ -106,8 +106,9 @@ GRAPH_TO_ROW_MAP = [
     (r"MAXHUB.*COX|BE-MAXHUB|MAX.?HUB", "E28", "Max Hub Ltd COX"),
 
     # ---- ISP Clients (rows 31-51) ----
-    (r"ADN.*DHK.*ISP|ADN-DhakaColo|ADN.*DhakaColo|ADN.*DC(?!.*LD)", "E31", "ADN DHK-Primary"),
+    # NOTE: E32 (SEC) must come before E31 (Primary) — first match wins
     (r"ADN.*DHK.*SEC|ADN.*DhakaColo.*SEC", "E32", "ADN DHK-Secondary"),
+    (r"ADN.*DHK.*ISP|ADN-DhakaColo|ADN.*DhakaColo|ADN.*DC(?!.*LD)", "E31", "ADN DHK-Primary"),
     (r"TELET.LK.*MOG|Teletalk.*PRI.*DHK|TELETALK.*PRI.*DHK|Teletalk.*MOG", "E33", "Teletalk DHK-Primary"),
     (r"Telet.lk.*CTG.*Sec|TELET.LK.*CTG.*Sec|Teltatalk.*CTG.*Sec", "E35", "Teletalk CTG-Secondary"),
     (r"Teletalk.*PRI.*CTG|TELETALK.*PRI.*CTG|Teletalk.*CTG(?!.*Sec)", "E34", "Teletalk CTG-Primary"),
@@ -198,9 +199,16 @@ def extract_client_keyword(title: str) -> str:
     Output: "Coronet-IPT"
 
     The client name is typically the 2nd segment when split by " - ".
+    For two-part titles ("ADN-DhakaColo - TenGigE0/0/0"), the client is
+    in part[0] since part[1] is the interface — detect this and return part[0].
     """
     parts = re.split(r"\s+-\s+", title)
-    if len(parts) >= 2:
+    if len(parts) >= 3:
+        return parts[1].strip()
+    if len(parts) == 2:
+        # If the second part looks like an interface name, the client is in part[0]
+        if re.search(r"(Bundle-Ether|TenGigE|HundredGigE|FortyGigE|GigE\d|GigabitEthernet|Ethernet\d|Ether\d|(?:Gi|Te|Fo|Hu)\d+/)", parts[1], re.I):
+            return parts[0].strip()
         return parts[1].strip()
     return title.strip()
 
@@ -225,18 +233,18 @@ def parse_graphs_from_text(text: str) -> list:
     # then find the Inbound/Outbound stats that follow each title
     title_indices = []
     for i, line in enumerate(lines):
-        if re.search(r"(Bundle-Ether|TenGigE|HundredGigE|GigE\d|Ether\d{2,})", line, re.I):
-            # Make sure it looks like a title (has BSCPLC or client name pattern)
-            if re.search(r"(BSCPLC|IPT|IPBW|LD|CORE)", line, re.I) or re.search(r"\d-\w+-\w+", line):
+        if re.search(r"(Bundle-Ether|TenGigE|HundredGigE|FortyGigE|TwentyFiveGig|GigE\d|GigabitEthernet|Ethernet\d|Ether\d{2,}|(?:^|\s)(?:Gi|Te|Fo|Hu)\d+/)", line, re.I):
+            # Make sure it looks like a title (has known device/client marker or prefix pattern)
+            if re.search(r"(BSCPLC|IPT|IPBW|LD|CORE|DHK|COX|KKT|CTG|TEJ|BDREN|BDCCL|TELETALK|CORONET|DELTA|LINK3|PEEREX|EXABYTE|ADN|BDHUB|REGO|GFCL|MAXHUB|NOVOCOM|EQUITEL|VIRGO|VELOCITY|WINDSTREAM|INTRAGLOBE|GMAX|EDGENEXT|SSONLINE|RACE|TELNET|COXLINK|BDLINK)", line, re.I) or re.search(r"\d-\w+-\w+", line) or re.search(r"\w+\s+-\s+\w+\s+-\s+", line):
                 title_indices.append(i)
 
     for ti_idx, ti in enumerate(title_indices):
         title = lines[ti].strip()
 
         # Search for Inbound/Outbound Maximum in lines after this title
-        # (up to the next title or 30 lines, whichever comes first)
+        # (up to the next title or 50 lines, whichever comes first)
         next_ti = title_indices[ti_idx + 1] if ti_idx + 1 < len(title_indices) else len(lines)
-        search_end = min(ti + 30, next_ti)
+        search_end = min(ti + 50, next_ti)
         search_block = "\n".join(lines[ti:search_end])
 
         in_max, in_unitless = _extract_maximum(search_block, "Inbound")
@@ -252,15 +260,22 @@ def parse_graphs_from_text(text: str) -> list:
     return graphs
 
 
+def _direction_pattern(direction: str) -> str:
+    """Build an OCR-tolerant regex for 'Inbound' or 'Outbound'."""
+    if direction.lower() == "inbound":
+        return r"\b[IiLl1][Nn]\s*[Bb][Oo][Uu][Nn][Dd]"
+    return r"\b[OoO0Qq][Uu][Tt]\s*[Bb][Oo][Uu][Nn][Dd]"
+
+
 def _extract_maximum(text_block: str, direction: str) -> tuple:
     """
     Extract the Maximum value for Inbound or Outbound from a text block.
     Returns (value_in_mbps, is_unitless) or (None, False) if not found.
     """
     for line in text_block.split("\n"):
-        if not re.search(rf"\b{direction}\b", line, re.I):
+        if not re.search(_direction_pattern(direction), line, re.I):
             continue
-        pat = r"Max\w*[:\s]+\s*([-\d.,]+)\s*([GgMmKk]?)\b"
+        pat = r"Max\w*[:\s]+\s*([-\d.,]+)\s*([GgMmKk]?)(?:bps)?\b"
         match = re.search(pat, line, re.I)
         if match:
             val_str = match.group(1).strip()
@@ -275,13 +290,13 @@ def _extract_maximum(text_block: str, direction: str) -> tuple:
 
     lines = text_block.split("\n")
     for i, line in enumerate(lines):
-        if re.search(rf"\b{direction}\b", line, re.I):
+        if re.search(_direction_pattern(direction), line, re.I):
             combined = line
             if i + 1 < len(lines):
                 combined += " " + lines[i + 1]
             if i + 2 < len(lines):
                 combined += " " + lines[i + 2]
-            pat = r"Max\w*[:\s]+\s*([-\d.,]+)\s*([GgMmKk]?)\b"
+            pat = r"Max\w*[:\s]+\s*([-\d.,]+)\s*([GgMmKk]?)(?:bps)?\b"
             match = re.search(pat, combined, re.I)
             if match:
                 val_str = match.group(1).strip()
@@ -322,19 +337,69 @@ def convert_to_mbps(value: float, unit: str) -> float:
 
 # Curated fuzzy token lookup for common OCR-garbled titles
 _FUZZY_TOKEN_MAP = [
+    # IIG Clients
     ({"BDHUB", "LIG"},             "E4",  "BDHUB DHK IIG (fuzzy)"),
     ({"BDHUB", "IIG"},             "E4",  "BDHUB DHK IIG (fuzzy)"),
+    ({"EQUITEL"},                   "E5",  "Equitel DHK (fuzzy)"),
+    ({"SKYTEL", "PRI"},            "E6",  "Skytel Primary (fuzzy)"),
+    ({"SKYTEL", "SEC"},            "E7",  "Skytel Secondary (fuzzy)"),
+    ({"PEEREX", "TEJ"},            "E8",  "Peerex DHK (fuzzy)"),
     ({"PEEREX", "COX", "02"},      "E10", "Peerex Cox-3432 (fuzzy)"),
     ({"PEEREX", "COX", "0"},       "E10", "Peerex Cox-3432 (fuzzy-@)"),
+    ({"NOVOCOM"},                   "E12", "NOVOCOM DHK (fuzzy)"),
     ({"WINDSTREM", "IPT"},         "E13", "Windstream COX IIG (fuzzy)"),
     ({"WINDSTREM", "IIPT"},        "E13", "Windstream COX IIG (fuzzy-[)"),
     ({"WINDSTREAM", "IPT"},        "E13", "Windstream COX IIG (fuzzy)"),
+    ({"VELOCITY", "TEJ"},          "E14", "Velocity DHK-Tej (fuzzy)"),
+    ({"VELOCITY", "DHK"},          "E15", "Velocity DHK-Khaza (fuzzy)"),
+    ({"VIRGO"},                     "E16", "Virgo DHK (fuzzy)"),
+    ({"DELTA", "IPT"},             "E17", "Delta COX IIG (fuzzy)"),
+    ({"EXABYTE", "IPT"},           "E18", "Exabyte COX IIG (fuzzy)"),
+    ({"CORONET", "IPT"},           "E19", "Coronet COX IIG (fuzzy)"),
+    ({"INTRAGLOBE", "IPT"},        "E20", "Intraglobe KKT IIG (fuzzy)"),
+    ({"GMAX", "IPT"},              "E21", "Green Max COX IIG (fuzzy)"),
+    ({"BDLINK"},                    "E22", "BD-LINK DHK (fuzzy)"),
     ({"ADN", "GATEWAY", "SEC"},    "E24", "ADN-GW DHK-Secondary (fuzzy)"),
     ({"ADN", "GATEWAY"},           "E23", "ADN-GW DHK-Primary (fuzzy)"),
-    ({"CORONET", "LD"},            "E60", "Coronet COX LD (fuzzy)"),
-    ({"CORONET", "IPT"},           "E19", "Coronet COX IIG (fuzzy)"),
+    ({"REGO", "COX", "IIG"},       "E25", "Rego COX IIG (fuzzy)"),
+    ({"REGO", "IIG"},              "E26", "Rego KKT IIG (fuzzy)"),
+    ({"GFCL", "IPT"},             "E27", "GFCL COX IIG (fuzzy)"),
+    ({"MAXHUB"},                    "E28", "Max Hub Ltd COX (fuzzy)"),
+    # ISP Clients
+    ({"ADN", "DHAKACOLO", "SEC"},  "E32", "ADN DHK-Secondary (fuzzy)"),
+    ({"ADN", "DHAKACOLO"},         "E31", "ADN DHK-Primary (fuzzy)"),
+    ({"TELETALK", "PRI", "DHK"},   "E33", "Teletalk DHK-Primary (fuzzy)"),
+    ({"TELETALK", "CTG", "PRI"},   "E34", "Teletalk CTG-Primary (fuzzy)"),
+    ({"TELETALK", "CTG", "SEC"},   "E35", "Teletalk CTG-Secondary (fuzzy)"),
+    ({"COL", "CTG", "PRI"},        "E36", "COL CTG-Primary (fuzzy)"),
+    ({"COL", "CTG", "SEC"},        "E37", "COL CTG-Secondary (fuzzy)"),
+    ({"COXLINK"},                   "E38", "COX-Link COX (fuzzy)"),
+    ({"SSONLINE", "CLOUD"},        "E39", "SS Online DHK-Primary (fuzzy)"),
+    ({"BDREN", "PRI"},             "E41", "BDREN DHK-Primary (fuzzy)"),
+    ({"BDREN", "SEC"},             "E42", "BDREN DHK-Secondary (fuzzy)"),
+    ({"BDCCL"},                     "E43", "BDCCL DHK (fuzzy)"),
+    ({"LINK3", "DC"},              "E44", "Link3 DHK-Primary (fuzzy)"),
+    ({"LINK3", "TEJ"},             "E45", "Link3 DHK-Secondary (fuzzy)"),
+    ({"DHAKALINK", "PRI"},         "E46", "Dhaka-Link Primary (fuzzy)"),
+    ({"DHAKALINK", "SEC"},         "E47", "Dhaka-Link Secondary (fuzzy)"),
+    ({"BDREN", "EQUINIX"},         "E48", "BDREN DHK Equinix (fuzzy)"),
+    ({"RACEONLINE"},                "E49", "Race Online Ltd (fuzzy)"),
+    ({"TELNET"},                    "E50", "Telnet Dhk-Colo (fuzzy)"),
+    # Cache
+    ({"EXABYTE", "CLOUDFLARE"},    "E54", "Exabyte Cache (fuzzy)"),
+    ({"EDGENEXT"},                  "E54", "Exabyte Cache EDGENEXT (fuzzy)"),
+    ({"SSONLINE", "CACHE"},        "E55", "SS Online Cache (fuzzy)"),
+    # LD Clients
     ({"DELTA", "LD"},              "E58", "Delta COX LD (fuzzy)"),
-    ({"DELTA", "IPT"},             "E17", "Delta COX IIG (fuzzy)"),
+    ({"INTRAGLOBE", "LD"},         "E59", "Intraglobe KKT LD (fuzzy)"),
+    ({"CORONET", "LD"},            "E60", "Coronet COX LD (fuzzy)"),
+    ({"GFCL", "LD"},               "E61", "GFCL COX LD (fuzzy)"),
+    ({"BDHUB", "LD"},              "E62", "BDHUB COX LD (fuzzy)"),
+    ({"GMAX", "LD"},               "E63", "Green Max COX LD (fuzzy)"),
+    ({"EXABYTE", "LD"},            "E64", "Exabyte COX LD (fuzzy)"),
+    ({"WINDSTREAM", "LD"},         "E65", "Windstream KKT LD (fuzzy)"),
+    ({"COL", "LD"},                "E66", "COL COX LD (fuzzy)"),
+    ({"SSONLINE", "LD"},           "E67", "SS Online COX LD (fuzzy)"),
 ]
 
 def _fuzzy_match(title: str) -> tuple:
@@ -369,10 +434,13 @@ def match_graph_to_row(title: str) -> tuple:
     if not title:
         return None, None
 
-    # Clean OCR artifacts
+    # Clean OCR artifacts — common character substitutions
     clean_title = re.sub(r"[|!]", "l", title)
     clean_title = re.sub(r"@", "0", clean_title)   # @ → 0 (common OCR)
     clean_title = re.sub(r"\[", "I", clean_title)   # [ → I (common OCR)
+    clean_title = re.sub(r"\]", ")", clean_title)   # ] → ) (common OCR)
+    clean_title = re.sub(r"\{", "(", clean_title)   # { → ( (common OCR)
+    clean_title = re.sub(r"\}", ")", clean_title)   # } → ) (common OCR)
     clean_title = re.sub(r"\s+", " ", clean_title)
 
     # Extract client keyword
@@ -404,6 +472,11 @@ def match_graph_to_row(title: str) -> tuple:
 # =====================================================================
 # SECTION 3 — FULL EXTRACTION PIPELINE
 # =====================================================================
+
+# Cells where multiple graphs should be SUMMED instead of taking the max.
+# E54 = Cache (Exabyte TEJ + DC + EDGENEXT all contribute to one total).
+_SUM_CELLS = {"E54"}
+
 
 def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
     """
@@ -442,8 +515,9 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
         log.info(f"  Found {len(graphs)} graph(s) on page {page_num}")
 
         for g in graphs:
-            in_max = g["inbound_max"] or 0.0
-            out_max = g["outbound_max"] or 0.0
+            in_max = g["inbound_max"] if g["inbound_max"] is not None else 0.0
+            out_max = g["outbound_max"] if g["outbound_max"] is not None else 0.0
+            extraction_failed = (g["inbound_max"] is None and g["outbound_max"] is None)
             max_mbps = max(in_max, out_max)
 
             row_ref, desc = match_graph_to_row(g["title"])
@@ -456,12 +530,25 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
                 "max_mbps": max_mbps,
                 "row_ref": row_ref,
                 "desc": desc,
+                "extraction_failed": extraction_failed,
             }
             all_graphs.append(info)
 
+            if extraction_failed and row_ref:
+                log.warning(f"  EXTRACTION FAILED: {desc} -> {row_ref} — could not parse Inbound/Outbound values from OCR text")
+
             if row_ref:
-                # Keep the larger value if duplicate
-                if row_ref not in results or max_mbps > results[row_ref]["mbps"]:
+                # Keep the larger value if duplicate (skip zero-value extraction failures)
+                if extraction_failed and row_ref in results:
+                    log.info(f"  SKIP (extraction failed, keeping existing): {desc} -> {row_ref}")
+                elif row_ref in _SUM_CELLS and row_ref in results:
+                    # Accumulate (SUM) for cells that aggregate multiple graphs
+                    results[row_ref]["mbps"] += max_mbps
+                    results[row_ref]["in_mbps"] += in_max
+                    results[row_ref]["out_mbps"] += out_max
+                    results[row_ref]["title"] += f" + {g['title']}"
+                    results[row_ref]["desc"] += f" + {desc}"
+                elif row_ref not in results or max_mbps > results[row_ref]["mbps"]:
                     results[row_ref] = {
                         "mbps": max_mbps,
                         "in_mbps": in_max,
@@ -469,6 +556,7 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
                         "title": g["title"],
                         "desc": desc,
                         "suspect": g.get("suspect", False),
+                        "extraction_failed": extraction_failed,
                     }
                 log.info(f"  MATCH: {desc} -> {row_ref} = {max_mbps:.2f} Mbps")
             else:
@@ -609,9 +697,12 @@ SECTION_HEADER_ROWS = {3, 30, 53, 57}
 
 
 # All E-column rows expected to be filled (used to detect unfilled rows)
+# NOTE: E40 and E51 excluded — no MRTG graph patterns target these rows.
+# Re-add them here if mapping patterns are added to GRAPH_TO_ROW_MAP.
 EXPECTED_E_ROWS = (
     [f"E{i}" for i in range(4, 29)] +
-    [f"E{i}" for i in range(31, 52)] +
+    [f"E{i}" for i in range(31, 40)] +
+    [f"E{i}" for i in range(41, 51)] +
     ["E54", "E55"] +
     [f"E{i}" for i in range(58, 68)]
 )
