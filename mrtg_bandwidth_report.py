@@ -571,8 +571,11 @@ _FILL_YELLOW = PatternFill(start_color="FFFFFF00", fill_type="solid")  # opaque 
 _FILL_HEADER = PatternFill(start_color="FF375623", fill_type="solid")  # dark green
 _FONT_HEADER = Font(name="Calibri", size=11, bold=True, color="FFFFFFFF")  # white bold
 
-# Title row (row 1) accent — medium bottom border
-_TITLE_BORDER = Border(bottom=Side(style="medium"))
+# Cell borders
+_THIN_SIDE   = Side(style="thin")
+_MEDIUM_SIDE = Side(style="medium")
+_CELL_BORDER  = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_THIN_SIDE)
+_TITLE_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_MEDIUM_SIDE)
 
 
 def _pick_e_fill(pct: float, corrected: bool):
@@ -638,15 +641,18 @@ def _fix_apply_fill(output_path: str):
                         fm = re.search(r'fillId="(\d+)"', tag)
                         if fm and fm.group(1) != "0" and "applyFill" not in tag:
                             tag = tag.replace("fillId=", 'applyFill="1" fillId=', 1)
+                        bm = re.search(r'borderId="(\d+)"', tag)
+                        if bm and bm.group(1) != "0" and "applyBorder" not in tag:
+                            tag = tag.replace("borderId=", 'applyBorder="1" borderId=', 1)
                         return tag
 
                     xml = re.sub(r"<xf\b[^>]*(?:/>|>)", _patch, xml)
                     data = xml.encode("utf-8")
                 zout.writestr(item, data)
         os.replace(tmp, output_path)
-        log.info("  Fill patch applied (applyFill='1' added to styles.xml)")
+        log.info("  Style patch applied (applyFill='1' and applyBorder='1' added to styles.xml)")
     except Exception as exc:
-        log.warning(f"  Fill patch failed — fills may not display in Excel: {exc}")
+        log.warning(f"  Style patch failed — fills/borders may not display in Excel: {exc}")
         if os.path.exists(tmp):
             os.remove(tmp)
 
@@ -742,9 +748,13 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
             hdr_cell.fill = _FILL_HEADER
             hdr_cell.font = _FONT_HEADER
 
-    # --- Title row accent: medium bottom border ---
-    for col_letter in ("A", "B", "C", "D", "E", "F"):
-        ws[f"{col_letter}1"].border = _TITLE_BORDER
+    # --- Apply borders to all data cells (A:F, rows 1 to last used row) ---
+    _DATA_COLS = ("A", "B", "C", "D", "E", "F")
+    max_row = max(ws.max_row, 68)
+    for row_num in range(1, max_row + 1):
+        border = _TITLE_BORDER if row_num == 1 else _CELL_BORDER
+        for col_letter in _DATA_COLS:
+            ws[f"{col_letter}{row_num}"].border = border
 
     # --- Fix Cache Total: always write formula (not static value) ---
     ws["E56"] = "=SUM(E54,E55)"

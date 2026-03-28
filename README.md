@@ -16,7 +16,7 @@ A Python desktop tool that automatically extracts bandwidth usage data from MRTG
 4. **Stats Parsing** — Parses Inbound/Outbound Maximum values with automatic unit detection (G/M/k/bps)
 5. **OCR Correction** — Automatically detects and fixes common OCR decimal-drop errors (e.g. "2.93G" read as "293G") using the allocated bandwidth as a sanity ceiling
 6. **Graph-to-Row Mapping** — Matches each graph's client name to the correct spreadsheet row using configurable regex patterns + fuzzy token matching as fallback
-7. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet with traffic-light colour coding, preserving all existing formulas. A post-save XML patch adds the `applyFill="1"` attribute that openpyxl omits by default, ensuring fills render correctly in Excel
+7. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet with traffic-light colour coding and cell borders, preserving all existing formulas. A post-save XML patch adds the `applyFill="1"` and `applyBorder="1"` attributes that openpyxl omits by default, ensuring fills and borders render correctly in Excel
 
 ---
 
@@ -49,13 +49,246 @@ The generated Excel report contains Maximum Usage in Mbps for each client, organ
 | Blue | Value was auto-corrected by OCR decimal-drop fix — review advised |
 | Yellow (F col) | No graph matched for this client row |
 
-*Section headers (IIG Clients, ISP Clients, etc.) are styled dark green. Formulas for totals and summaries are preserved from the template.*
+*All data cells (A–F) have thin borders for readability. Section headers (IIG Clients, ISP Clients, etc.) are styled dark green. Formulas for totals and summaries are preserved from the template.*
 
 ---
 
-## Installation
+## Requirements
 
-### One-Liner Install
+| Component | Purpose |
+|-----------|---------|
+| Python 3.8+ | Runtime |
+| Tesseract OCR | Text recognition from graph images |
+| Poppler (pdftoppm) | PDF to image conversion |
+| tkinter | GUI toolkit (included with Python on macOS/Windows; separate package on some Linux distros) |
+| openpyxl | Excel file reading/writing |
+| pdf2image | PDF page rendering |
+| pytesseract | Python wrapper for Tesseract |
+| Pillow | Image processing |
+
+---
+
+## Automated Installation Scripts
+
+Copy and paste the script for your OS into a terminal. Each script installs **all** system and Python dependencies from scratch on a clean machine.
+
+### macOS
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== MRTG Bandwidth Report — macOS Installer ==="
+
+# Install Homebrew if not present
+if ! command -v brew &>/dev/null; then
+    echo "[1/4] Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Add brew to PATH for Apple Silicon and Intel
+    if [ -f /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -f /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+else
+    echo "[1/4] Homebrew already installed."
+fi
+
+# Install Python, Tesseract, Poppler
+echo "[2/4] Installing system packages (Python, Tesseract, Poppler)..."
+brew install python tesseract poppler
+
+# Install Python dependencies
+echo "[3/4] Installing Python packages..."
+python3 -m pip install --upgrade pip
+python3 -m pip install openpyxl pdf2image pytesseract Pillow
+
+# Verify
+echo "[4/4] Verifying installation..."
+python3 --version
+tesseract --version | head -1
+pdftoppm -v 2>&1 | head -1
+python3 -c "import openpyxl, pdf2image, pytesseract, PIL; print('All Python packages OK')"
+
+echo ""
+echo "=== Installation complete! ==="
+echo "Run:  python3 mrtg_bandwidth_report.py"
+```
+
+### Linux (Ubuntu / Debian)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== MRTG Bandwidth Report — Ubuntu/Debian Installer ==="
+
+# Update package lists
+echo "[1/4] Updating package lists..."
+sudo apt update
+
+# Install Python, Tesseract, Poppler, tkinter
+echo "[2/4] Installing system packages..."
+sudo apt install -y python3 python3-pip python3-venv python3-tk \
+    tesseract-ocr poppler-utils
+
+# Install Python dependencies
+echo "[3/4] Installing Python packages..."
+python3 -m pip install --upgrade pip --break-system-packages 2>/dev/null \
+    || python3 -m pip install --upgrade pip
+python3 -m pip install openpyxl pdf2image pytesseract Pillow --break-system-packages 2>/dev/null \
+    || python3 -m pip install openpyxl pdf2image pytesseract Pillow
+
+# Verify
+echo "[4/4] Verifying installation..."
+python3 --version
+tesseract --version 2>&1 | head -1
+pdftoppm -v 2>&1 | head -1
+python3 -c "import openpyxl, pdf2image, pytesseract, PIL; print('All Python packages OK')"
+
+echo ""
+echo "=== Installation complete! ==="
+echo "Run:  python3 mrtg_bandwidth_report.py"
+```
+
+### Linux (Fedora / RHEL / CentOS)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== MRTG Bandwidth Report — Fedora/RHEL Installer ==="
+
+# Install Python, Tesseract, Poppler, tkinter
+echo "[1/3] Installing system packages..."
+sudo dnf install -y python3 python3-pip python3-tkinter \
+    tesseract poppler-utils
+
+# Install Python dependencies
+echo "[2/3] Installing Python packages..."
+python3 -m pip install --upgrade pip
+python3 -m pip install openpyxl pdf2image pytesseract Pillow
+
+# Verify
+echo "[3/3] Verifying installation..."
+python3 --version
+tesseract --version 2>&1 | head -1
+pdftoppm -v 2>&1 | head -1
+python3 -c "import openpyxl, pdf2image, pytesseract, PIL; print('All Python packages OK')"
+
+echo ""
+echo "=== Installation complete! ==="
+echo "Run:  python3 mrtg_bandwidth_report.py"
+```
+
+### Linux (Arch / Manjaro)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== MRTG Bandwidth Report — Arch Linux Installer ==="
+
+# Install Python, Tesseract, Poppler, tk
+echo "[1/3] Installing system packages..."
+sudo pacman -Syu --noconfirm python python-pip tk tesseract poppler
+
+# Install Python dependencies
+echo "[2/3] Installing Python packages..."
+python -m pip install --upgrade pip --break-system-packages
+python -m pip install openpyxl pdf2image pytesseract Pillow --break-system-packages
+
+# Verify
+echo "[3/3] Verifying installation..."
+python --version
+tesseract --version 2>&1 | head -1
+pdftoppm -v 2>&1 | head -1
+python -c "import openpyxl, pdf2image, pytesseract, PIL; print('All Python packages OK')"
+
+echo ""
+echo "=== Installation complete! ==="
+echo "Run:  python mrtg_bandwidth_report.py"
+```
+
+### Windows (PowerShell — recommended)
+
+Open **PowerShell as Administrator** and run:
+
+```powershell
+Write-Host "=== MRTG Bandwidth Report - Windows Installer ===" -ForegroundColor Cyan
+
+# Install winget packages (Python, Tesseract, Poppler)
+Write-Host "[1/4] Installing system packages via winget..." -ForegroundColor Yellow
+
+$packages = @(
+    @{ Id = "Python.Python.3.11";       Name = "Python 3.11" },
+    @{ Id = "UB-Mannheim.TesseractOCR"; Name = "Tesseract OCR" },
+    @{ Id = "oschwartz10612.Poppler";    Name = "Poppler" }
+)
+
+foreach ($pkg in $packages) {
+    $installed = winget list --id $pkg.Id 2>$null | Select-String $pkg.Id
+    if ($installed) {
+        Write-Host "  $($pkg.Name) already installed." -ForegroundColor Green
+    } else {
+        Write-Host "  Installing $($pkg.Name)..."
+        winget install --id $pkg.Id --accept-source-agreements --accept-package-agreements
+    }
+}
+
+# Refresh PATH so newly installed commands are available
+Write-Host "[2/4] Refreshing PATH..." -ForegroundColor Yellow
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + `
+            [System.Environment]::GetEnvironmentVariable("Path","User")
+
+# Install Python packages
+Write-Host "[3/4] Installing Python packages..." -ForegroundColor Yellow
+py -3 -m pip install --upgrade pip
+py -3 -m pip install openpyxl pdf2image pytesseract Pillow
+
+# Verify
+Write-Host "[4/4] Verifying installation..." -ForegroundColor Yellow
+py -3 --version
+tesseract --version 2>$null | Select-Object -First 1
+pdftoppm -v 2>&1 | Select-Object -First 1
+py -3 -c "import openpyxl, pdf2image, pytesseract, PIL; print('All Python packages OK')"
+
+Write-Host ""
+Write-Host "=== Installation complete! ===" -ForegroundColor Cyan
+Write-Host "Run:  py -3 mrtg_bandwidth_report.py"
+Write-Host "  or: double-click run.bat"
+```
+
+### Windows (Chocolatey — alternative)
+
+Open **PowerShell as Administrator** and run:
+
+```powershell
+# Install Chocolatey if not present
+if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+    Set-ExecutionPolicy Bypass -Scope Process -Force
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+}
+
+# Install system packages
+choco install python3 tesseract poppler -y
+
+# Refresh PATH
+refreshenv
+
+# Install Python packages
+py -3 -m pip install --upgrade pip
+py -3 -m pip install openpyxl pdf2image pytesseract Pillow
+
+Write-Host "Installation complete! Run: py -3 mrtg_bandwidth_report.py"
+```
+
+---
+
+## Quick Install (one-liner)
+
+If you already have Python and a package manager installed:
 
 **macOS:**
 ```bash
@@ -64,30 +297,13 @@ brew install tesseract poppler && pip install openpyxl pdf2image pytesseract Pil
 
 **Ubuntu / Debian:**
 ```bash
-sudo apt install -y tesseract-ocr poppler-utils && pip install openpyxl pdf2image pytesseract Pillow
+sudo apt install -y tesseract-ocr poppler-utils python3-tk && pip install openpyxl pdf2image pytesseract Pillow
 ```
 
-**Windows (with Chocolatey):**
+**Windows (winget):**
 ```powershell
-choco install tesseract poppler && pip install openpyxl pdf2image pytesseract Pillow
+winget install UB-Mannheim.TesseractOCR oschwartz10612.Poppler; pip install openpyxl pdf2image pytesseract Pillow
 ```
-
-**Windows (manual):**
-1. Download Tesseract from [UB-Mannheim/tesseract](https://github.com/UB-Mannheim/tesseract/wiki) and install
-2. Download Poppler from [oschwartz10612/poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases) and add to PATH
-3. Run: `pip install openpyxl pdf2image pytesseract Pillow`
-
-### Requirements
-
-| Component | Purpose |
-|-----------|---------|
-| Python 3.8+ | Runtime |
-| Tesseract OCR | Text recognition from graph images |
-| Poppler (pdftoppm) | PDF to image conversion |
-| openpyxl | Excel file reading/writing |
-| pdf2image | PDF page rendering |
-| pytesseract | Python wrapper for Tesseract |
-| Pillow | Image processing |
 
 ---
 
@@ -98,6 +314,8 @@ choco install tesseract poppler && pip install openpyxl pdf2image pytesseract Pi
 ```bash
 python mrtg_bandwidth_report.py
 ```
+
+On Windows you can also double-click **`run.bat`**, which auto-detects Tesseract and Poppler from common install paths (winget, Chocolatey, manual).
 
 Opens a graphical interface where you can:
 - Browse and select the input PDF and template XLSX
@@ -177,7 +395,7 @@ This tool uses OCR to read text from graph images, which has inherent limitation
 - **Typical accuracy: ~80-90%** of values extracted correctly
 - Unit letters (M/G/k) may be missed or misread by OCR
 - Common OCR character substitutions (`@` → `0`, `[` → `I`, `l` → `I`) are automatically corrected before pattern matching
-- **Decimal-drop correction:** Values wildly exceeding allocated bandwidth (>10×) are automatically corrected by dividing until plausible (e.g. 293,000 Mbps → 14,560 Mbps); corrected cells are highlighted blue
+- **Decimal-drop correction:** Values wildly exceeding allocated bandwidth (>10x) are automatically corrected by dividing until plausible (e.g. 293,000 Mbps → 14,560 Mbps); corrected cells are highlighted blue
 - Some graph titles may not match patterns — unmatched rows are highlighted yellow in the F column as a manual review flag
 - Graphs marked "Could not open!" in the PDF will have no data (this is a Cacti error, not a tool issue)
 
@@ -190,8 +408,9 @@ This tool uses OCR to read text from graph images, which has inherent limitation
 ```
 mrtg-bandwidth-report/
 ├── mrtg_bandwidth_report.py    # Main script (GUI + CLI)
-├── run.bat                     # Windows launcher (sets Tesseract + Poppler PATH)
+├── run.bat                     # Windows launcher (auto-detects Tesseract + Poppler)
 ├── tests/
+│   ├── __init__.py
 │   └── test_fill_logic.py      # Unit tests for traffic-light fill logic
 ├── README.md                   # This file
 ├── screenshots/                # Documentation images
