@@ -18,7 +18,14 @@ Thumbs.db
 # Internal planning / tooling docs — never pushed to GitHub
 docs/
 .claude/
+.omc/
+.serena/
 CLAUDE.md
+AGENTS.md
 *.prd.docx
 planning.md
 tasks.md
+
+# Debug/temp screenshots generated during development
+screenshots/output_*.png
+screenshots/patched_*.png

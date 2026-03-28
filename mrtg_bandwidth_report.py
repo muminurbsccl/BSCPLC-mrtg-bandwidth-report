@@ -614,6 +614,43 @@ EXPECTED_E_ROWS = (
 )
 
 
+def _fix_apply_fill(output_path: str):
+    """
+    openpyxl omits applyFill="1" from xf entries even when a non-default fill is
+    set.  Excel requires this attribute to display cell fills — without it the
+    fillId is silently ignored and cells appear unfilled.
+
+    This post-processes styles.xml inside the saved xlsx zip to add the missing
+    attribute to every xf entry whose fillId is non-zero.
+    """
+    import zipfile as _zf
+    tmp = output_path + "._patch.tmp"
+    try:
+        with _zf.ZipFile(output_path, "r") as zin, \
+             _zf.ZipFile(tmp, "w", _zf.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == "xl/styles.xml":
+                    xml = data.decode("utf-8")
+
+                    def _patch(m):
+                        tag = m.group(0)
+                        fm = re.search(r'fillId="(\d+)"', tag)
+                        if fm and fm.group(1) != "0" and "applyFill" not in tag:
+                            tag = tag.replace("fillId=", 'applyFill="1" fillId=', 1)
+                        return tag
+
+                    xml = re.sub(r"<xf\b[^>]*(?:/>|>)", _patch, xml)
+                    data = xml.encode("utf-8")
+                zout.writestr(item, data)
+        os.replace(tmp, output_path)
+        log.info("  Fill patch applied (applyFill='1' added to styles.xml)")
+    except Exception as exc:
+        log.warning(f"  Fill patch failed — fills may not display in Excel: {exc}")
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
 def generate_report(template_path: str, extraction_data: dict, output_path: str, report_date: str = None):
     """
     Load template xlsx, fill in E-column values, update title date, save output.
@@ -714,6 +751,7 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
     log.info("  E56 set to =SUM(E54,E55) (Cache Total formula)")
 
     wb.save(output_path)
+    _fix_apply_fill(output_path)
     log.info(f"Report saved: {output_path} ({filled} cells filled)")
     return output_path
 

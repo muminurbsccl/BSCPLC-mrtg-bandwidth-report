@@ -16,7 +16,7 @@ A Python desktop tool that automatically extracts bandwidth usage data from MRTG
 4. **Stats Parsing** — Parses Inbound/Outbound Maximum values with automatic unit detection (G/M/k/bps)
 5. **OCR Correction** — Automatically detects and fixes common OCR decimal-drop errors (e.g. "2.93G" read as "293G") using the allocated bandwidth as a sanity ceiling
 6. **Graph-to-Row Mapping** — Matches each graph's client name to the correct spreadsheet row using configurable regex patterns + fuzzy token matching as fallback
-7. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet with traffic-light colour coding, preserving all existing formulas
+7. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet with traffic-light colour coding, preserving all existing formulas. A post-save XML patch adds the `applyFill="1"` attribute that openpyxl omits by default, ensuring fills render correctly in Excel
 
 ---
 
