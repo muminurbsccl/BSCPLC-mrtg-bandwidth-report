@@ -17,6 +17,7 @@ A Python desktop tool that automatically extracts bandwidth usage data from MRTG
 5. **OCR Correction** — Automatically detects and fixes common OCR decimal-drop errors (e.g. "2.93G" read as "293G") using the allocated bandwidth as a sanity ceiling
 6. **Graph-to-Row Mapping** — Matches each graph's client name to the correct spreadsheet row using configurable regex patterns + fuzzy token matching as fallback
 7. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet with traffic-light colour coding and cell borders, preserving all existing formulas. A post-save XML patch adds the `applyFill="1"` and `applyBorder="1"` attributes that openpyxl omits by default, ensuring fills and borders render correctly in Excel
+8. **Batch Processing** — Optionally process an entire directory of daily PDFs in one run (GUI Batch Mode tab or `--batch DIR` CLI flag); report dates are auto-detected from each PDF filename
 
 ---
 
@@ -317,7 +318,9 @@ python mrtg_bandwidth_report.py
 
 On Windows you can also double-click **`run.bat`**, which auto-detects Tesseract and Poppler from common install paths (winget, Chocolatey, manual).
 
-Opens a graphical interface where you can:
+Opens a graphical interface with two tabs:
+
+**Single File tab**
 - Browse and select the input PDF and template XLSX
 - Set the report date
 - Adjust OCR DPI (higher = better accuracy, slower processing)
@@ -325,8 +328,18 @@ Opens a graphical interface where you can:
 - Inspect the graph-to-row mapping table
 - **Copy Unmatched Entries** — after each run, click this button to copy a list of client rows that had no matching graph in the PDF (tab-separated, paste directly into Excel or Notepad)
 
+**Batch Mode tab**
+- Select a directory containing multiple daily PDF files
+- Optionally set a separate output directory for the generated XLSX files
+- Click **Run Batch** — dates are auto-detected from each PDF filename; a report is generated for every PDF found
+
+**Shared options** (apply to both tabs):
+- **Warn duplicates** checkbox — logs a warning whenever two graphs match the same row, showing both values before the higher one wins
+- All settings (template path, DPI, warn-duplicates, batch directories) are saved automatically to `~/.mrtg_report_config.json` and restored on next launch
+
 ### CLI Mode
 
+**Single file:**
 ```bash
 python mrtg_bandwidth_report.py --cli \
     --pdf input26.3.26.pdf \
@@ -335,16 +348,28 @@ python mrtg_bandwidth_report.py --cli \
     --output "Bandwidth Report (MAX) For 26 March 2026.xlsx"
 ```
 
+**Batch (whole directory of PDFs):**
+```bash
+python mrtg_bandwidth_report.py --cli \
+    --batch /path/to/pdfs/ \
+    --template "Bandwidth Report (MAX) For 25 march 2026.xlsx" \
+    --output-dir /path/to/reports/
+```
+
 **CLI Options:**
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--pdf` | Input PDF with MRTG graphs | *required* |
+| `--pdf` | Input PDF with MRTG graphs (single-file mode) | *required unless `--batch`* |
+| `--batch DIR` | Process all PDFs in a directory; dates auto-detected from filenames | - |
 | `--template` | Template xlsx file (previous day) | *required* |
-| `--date` | Report date string | Today's date |
-| `--output` | Output xlsx path | Auto-generated |
+| `--date` | Report date string (single-file; auto-detected in batch) | Today's date |
+| `--output` | Output xlsx path (single-file) | Auto-generated |
+| `--output-dir DIR` | Output directory for batch-generated reports | Same dir as each PDF |
 | `--dpi` | PDF render DPI | 250 |
-| `--debug-json` | Save extraction debug data to JSON | - |
+| `--warn-duplicates` | Log a warning when two graphs map to the same row | off |
+| `--debug-json` | Save extraction debug data to JSON (single-file) | - |
+| `--debug-full` | Include raw per-page OCR text in debug JSON | off |
 
 ---
 
@@ -398,6 +423,7 @@ This tool uses OCR to read text from graph images, which has inherent limitation
 - Common OCR character substitutions (`@` → `0`, `[` → `I`, `|` → `l`, `]` → `)`) are automatically corrected before pattern matching
 - **OCR-tolerant direction matching** — garbled direction keywords (`lnbound`, `0utbound`, `1nbound`) are detected and matched correctly
 - **Decimal-drop correction:** Values wildly exceeding allocated bandwidth (>10x) are automatically corrected by dividing until plausible (e.g. 293,000 Mbps → 14,560 Mbps); corrected cells are highlighted blue. A false-positive safeguard prevents over-correction: if only one traffic direction triggers the correction and the corrected value falls below the other direction's raw value, the correction is reverted (e.g. a legitimate 167.53 Mbps burst on a small-allocated link is preserved instead of being divided to 16.75 Mbps)
+- **Duplicate row handling:** When two graphs map to the same spreadsheet row, the higher `MAX(in, out)` value wins. Enable **Warn duplicates** (GUI checkbox or `--warn-duplicates` CLI flag) to log each overwrite with both values and their source pages for review
 - **Cache cell accumulation:** Multiple cache graphs (e.g. Exabyte TEJ + DC + EDGENEXT) are summed rather than taking the maximum, for accurate totals
 - **Expanded interface detection:** Recognises `GigabitEthernet`, `Gi0/0`, `Te0/0`, `FortyGigE`, `TwentyFiveGig` in addition to `Bundle-Ether`, `TenGigE`, `HundredGigE`
 - **Fuzzy fallback matching:** 65-entry token map covers all client rows as a last resort when regex patterns fail

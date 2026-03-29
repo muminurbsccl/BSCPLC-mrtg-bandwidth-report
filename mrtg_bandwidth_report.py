@@ -126,8 +126,6 @@ GRAPH_TO_ROW_MAP = [
     (r"BDREN.*Equinix|BDREN.*CC.*Equinix", "E48", "BDREN DHK (Equinix)"),
     (r"Race.?Online|RACE.?ONLINE", "E49", "Race Online Ltd"),
     (r"Telnet.*ICT|TELNET.*ICT|Telnet.*DC|Telnet-DC", "E50", "Telnet Dhk-Colo"),
-    (r"C0RONET-CTG|CORONET-CTG(?!.*IPT)", "E19", "Coronet (CTG fallback)"),
-
     # ---- Cache (rows 54-55) ----
     (r"Exabyte.*Cloudflare.*TEJ", "E54", "Exabyte Cache TEJ"),
     (r"EDGENEXT.*CLOUD|BE-EDGENEXT", "E54", "Exabyte Cache (EDGENEXT)"),
@@ -149,24 +147,17 @@ GRAPH_TO_ROW_MAP = [
     (r"Delta.LD.*5000.*Cox|Delta-LD-5000", "E58", "Delta COX LD (Cox's Bazar)"),
 ]
 
-# Additional broad fallbacks — used when the full title is tried
+# Additional broad fallbacks — used when the full title is tried.
+# NOTE: Do NOT add entries already covered by GRAPH_TO_ROW_MAP; they will
+# never fire since GRAPH_TO_ROW_MAP is checked first.
 FALLBACK_MAP = [
     (r"GREENMAX.*COX(?!.*LD)", "E21", "Green Max COX IIG (GREENMAX)"),
     (r"Windstrem.*IPT|WINDSTREAM.*IPT(?!.*IIG)", "E13", "Windstream COX (typo)"),
     (r"PEEREX.*DHKCOLO", "E8", "Peerex DHK (DHKCOLO)"),
     (r"DELTA-IPT.*Ether193", "E17", "Delta COX IIG (IPT/193)"),
-    (r"BDHUB-IIG", "E4", "BDHUB DHK IIG (simple)"),
-    (r"COL-CTG-Pri", "E36", "COL CTG-Primary (Pri)"),
     (r"Telt?at?alk.*CTG.*Sec|Teltatalk.*Sec", "E35", "Teletalk CTG-Sec (OCR)"),
     (r"TELET\w+.*MOG|Teletalk.*MOG", "E33", "Teletalk DHK (MOG)"),
-    (r"ADN.*DhakaColo", "E31", "ADN DHK-Primary (DhakaColo)"),
-    (r"BDREN-PRI|BDREN.*PRI", "E41", "BDREN DHK-Primary (PRI)"),
-    (r"BDREN-SEC|BDREN.*SEC", "E42", "BDREN DHK-Secondary (SEC)"),
-    (r"Telnet-DC|Telnet.*DC", "E50", "Telnet Dhk-Colo (DC)"),
-    (r"SSOnline-DC|SS.?Online.*DC", "E39", "SS Online DHK (DC)"),
     (r"BDLINK|BD.LINK(?!.*LD)", "E22", "BD-LINK DHK (simple)"),
-    (r"BDHUB.LIG", "E4", "BDHUB DHK IIG (LIG OCR)"),
-    (r"PEEREX.*COX.*@[2z]", "E10", "Peerex Cox-3432 (@2 OCR)"),
     (r"Windstrem.*I.PT|Windstrem.*\[PT", "E13", "Windstream COX IIG (OCR)"),
 ]
 
@@ -281,7 +272,7 @@ def _extract_maximum(text_block: str, direction: str) -> tuple:
             val_str = match.group(1).strip()
             unit = match.group(2).strip()
             if "nan" in val_str.lower():
-                return 0.0, False
+                return None, False
             try:
                 val = float(val_str.replace(",", ""))
             except ValueError:
@@ -302,7 +293,7 @@ def _extract_maximum(text_block: str, direction: str) -> tuple:
                 val_str = match.group(1).strip()
                 unit = match.group(2).strip()
                 if "nan" in val_str.lower():
-                    return 0.0, False
+                    return None, False
                 try:
                     val = float(val_str.replace(",", ""))
                 except ValueError:
@@ -481,9 +472,16 @@ def match_graph_to_row(title: str) -> tuple:
 _SUM_CELLS = {"E54"}
 
 
-def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
+def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None,
+                       warn_duplicates: bool = False, collect_raw_ocr: bool = False) -> dict:
     """
     Main pipeline: PDF → images → OCR → parsed stats → mapped to rows.
+
+    Args:
+      warn_duplicates: if True, log a WARNING whenever a row would be overwritten
+                       by a higher-value graph (shows both old and new values).
+      collect_raw_ocr: if True, include per-page raw OCR text in the returned dict
+                       under key "raw_ocr_pages" (list of {"page": N, "text": "..."}).
 
     Returns dict with keys:
       results: { "E4": {"mbps": 13550, "title": "...", "desc": "..."}, ... }
@@ -491,6 +489,7 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
       could_not_open: count of "Could not open!" entries
       all_graphs: all parsed graph info for debugging
       total_pages: number of pages
+      raw_ocr_pages: (only when collect_raw_ocr=True) list of per-page OCR text dicts
     """
     images = pdf_to_images(pdf_path, dpi)
     total_pages = len(images)
@@ -499,6 +498,7 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
     unmatched = []
     could_not_open = 0
     all_graphs = []
+    raw_ocr_pages = []
 
     for page_idx, page_img in enumerate(images):
         page_num = page_idx + 1
@@ -508,6 +508,8 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
 
         # OCR the full page
         full_text = ocr_full_page(page_img)
+        if collect_raw_ocr:
+            raw_ocr_pages.append({"page": page_num, "text": full_text})
 
         # Count "Could not open!" entries
         cno_count = len(re.findall(r"Could not open", full_text, re.I))
@@ -552,12 +554,21 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
                     results[row_ref]["title"] += f" + {g['title']}"
                     results[row_ref]["desc"] += f" + {desc}"
                 elif row_ref not in results or max_mbps > results[row_ref]["mbps"]:
+                    if warn_duplicates and row_ref in results and not extraction_failed:
+                        prev = results[row_ref]
+                        log.warning(
+                            f"  DUPLICATE ROW {row_ref}: overwriting {prev['mbps']:.2f} Mbps "
+                            f"(pg {prev.get('page','?')}: {prev['title'][:50]}) "
+                            f"with {max_mbps:.2f} Mbps "
+                            f"(pg {page_num}: {g['title'][:50]})"
+                        )
                     results[row_ref] = {
                         "mbps": max_mbps,
                         "in_mbps": in_max,
                         "out_mbps": out_max,
                         "title": g["title"],
                         "desc": desc,
+                        "page": page_num,
                         "suspect": g.get("suspect", False),
                         "extraction_failed": extraction_failed,
                     }
@@ -566,13 +577,16 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None) -> dict:
                 unmatched.append(info)
                 log.warning(f"  UNMATCHED: {g['title'][:70]}")
 
-    return {
+    out = {
         "results": results,
         "unmatched": unmatched,
         "could_not_open": could_not_open,
         "all_graphs": all_graphs,
         "total_pages": total_pages,
     }
+    if collect_raw_ocr:
+        out["raw_ocr_pages"] = raw_ocr_pages
+    return out
 
 
 # =====================================================================
@@ -602,15 +616,28 @@ def _correct_value_pair(in_mbps: float, out_mbps: float, allocated: float, suspe
     floor_ratio = 0.005          # < 0.5% of allocated = suspect (only when bps-converted)
 
     def fix_high(val):
-        # Only correct values that are clearly impossible: > 10x the allocated bandwidth.
-        # Values between 1.5x–10x are flagged yellow but not auto-corrected (may be legitimate
-        # bursts or downgrade scenarios where the link still carries legacy traffic).
+        # AUTO-CORRECT: values > 10x allocated are clearly impossible OCR errors.
+        # Values 3x–10x are suspicious but may be legitimate bursts — they are
+        # flagged with a WARNING log for manual review but are NOT auto-corrected.
+        # Values 1.5x–3x are highlighted yellow by the traffic-light fill only.
         if val is None or val <= allocated * 10:
+            # Secondary flag: 3x–10x range — possible G→M unit-swap (e.g. "2.93 G"
+            # read as "293 M" when allocated is large enough to stay under 10x).
+            if val is not None and val > allocated * 3:
+                for div in (10, 100):
+                    candidate = round(val / div, 2)
+                    if 0 < candidate <= allocated:
+                        log.warning(
+                            f"    [OCR-SUSPECT] {val:.2f} Mbps is {val/allocated:.1f}x allocated — "
+                            f"possible decimal-drop OCR error (÷{div} would give {candidate:.2f} Mbps); "
+                            f"verify manually"
+                        )
+                        break
             return val, False
         for div in (10, 100, 1000, 10000):
             candidate = round(val / div, 2)
             if candidate <= ceiling:
-                log.info(f"    [AUTO-CORRECT] Decimal-drop (high): {val:.2f} -> {candidate:.2f} Mbps (÷{div})")
+                log.info(f"    [AUTO-CORRECT] Decimal-drop (high ÷{div}): {val:.2f} -> {candidate:.2f} Mbps")
                 return candidate, True
         return val, False
 
@@ -873,28 +900,58 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
 # SECTION 5 — CLI MODE
 # =====================================================================
 
-def run_cli():
-    parser = argparse.ArgumentParser(description="MRTG Bandwidth Report Generator (CLI)")
-    parser.add_argument("--pdf", required=True, help="Input PDF with MRTG graphs")
-    parser.add_argument("--template", required=True, help="Template xlsx file")
-    parser.add_argument("--output", help="Output xlsx path (auto-generated if omitted)")
-    parser.add_argument("--date", help="Report date, e.g. '26 March 2026'")
-    parser.add_argument("--dpi", type=int, default=250, help="PDF render DPI (default: 250)")
-    parser.add_argument("--debug-json", help="Save debug info to JSON file")
-    args = parser.parse_args()
+_MONTH_NAMES = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
 
-    if not os.path.isfile(args.pdf):
-        print(f"ERROR: PDF not found: {args.pdf}"); sys.exit(1)
-    if not os.path.isfile(args.template):
-        print(f"ERROR: Template not found: {args.template}"); sys.exit(1)
 
-    if not args.output:
-        date_str = args.date or datetime.now().strftime("%d %B %Y")
-        args.output = f"Bandwidth Report (MAX) For {date_str}.xlsx"
+def _extract_date_from_filename(filename: str) -> str:
+    """
+    Try to extract a human-readable date from a PDF filename.
 
-    print(f"Extracting from: {args.pdf}")
-    data = extract_all_graphs(args.pdf, dpi=args.dpi)
+    Patterns tried (examples):
+      26_March_2026.pdf  ->  "26 March 2026"
+      26-March-2026.pdf  ->  "26 March 2026"
+      2026-03-26.pdf     ->  "26 March 2026"
+      20260326.pdf       ->  "26 March 2026"
+    Falls back to today's date if no pattern matches.
+    """
+    base = os.path.splitext(os.path.basename(filename))[0]
 
+    # "26_March_2026" or "26-March-2026" or "26 March 2026"
+    m = re.search(
+        r"(\d{1,2})[_\-\s](" + "|".join(_MONTH_NAMES) + r")[_\-\s](\d{4})",
+        base, re.I,
+    )
+    if m:
+        day, month, year = m.group(1), m.group(2).capitalize(), m.group(3)
+        return f"{int(day)} {month} {year}"
+
+    # "2026-03-26" or "26-03-2026"
+    m = re.search(r"(\d{4})[_\-](\d{2})[_\-](\d{2})", base)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mo <= 12:
+            return f"{d} {_MONTH_NAMES[mo - 1]} {y}"
+
+    m = re.search(r"(\d{2})[_\-](\d{2})[_\-](\d{4})", base)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mo <= 12:
+            return f"{d} {_MONTH_NAMES[mo - 1]} {y}"
+
+    # "20260326"
+    m = re.search(r"(\d{4})(\d{2})(\d{2})", base)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return f"{d} {_MONTH_NAMES[mo - 1]} {y}"
+
+    return datetime.now().strftime("%d %B %Y")
+
+
+def _print_summary(data: dict):
     print(f"\n{'='*50}")
     print(f"Extraction Summary:")
     print(f"  Pages:           {data['total_pages']}")
@@ -912,23 +969,126 @@ def run_cli():
         info = data["results"][ref]
         print(f"  {ref} = {info['mbps']:.2f} Mbps  ({info['desc']})")
 
+
+def _save_debug_json(data: dict, path: str, full: bool = False):
+    debug = {
+        "results": {k: {"mbps": v["mbps"], "desc": v["desc"]} for k, v in data["results"].items()},
+        "unmatched": [{"page": g["page"], "title": g["title"], "max_mbps": g["max_mbps"]} for g in data["unmatched"]],
+        "could_not_open": data["could_not_open"],
+    }
+    if full and "raw_ocr_pages" in data:
+        debug["raw_ocr_pages"] = data["raw_ocr_pages"]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(debug, f, indent=2, ensure_ascii=False)
+    print(f"Debug JSON: {path}")
+
+
+def run_cli():
+    parser = argparse.ArgumentParser(description="MRTG Bandwidth Report Generator (CLI)")
+    # Single-file mode
+    parser.add_argument("--pdf", help="Input PDF with MRTG graphs (single-file mode)")
+    parser.add_argument("--output", help="Output xlsx path (auto-generated if omitted)")
+    # Batch mode
+    parser.add_argument("--batch", metavar="DIR",
+                        help="Batch mode: process all PDFs in DIR, auto-name outputs by date")
+    parser.add_argument("--output-dir", metavar="DIR",
+                        help="Batch mode: directory for output xlsx files (defaults to same dir as each PDF)")
+    # Shared
+    parser.add_argument("--template", required=True, help="Template xlsx file")
+    parser.add_argument("--date", help="Report date, e.g. '26 March 2026' (single-file; auto-detected in batch)")
+    parser.add_argument("--dpi", type=int, default=250, help="PDF render DPI (default: 250)")
+    parser.add_argument("--warn-duplicates", action="store_true",
+                        help="Warn when two graphs map to the same row (shows both values)")
+    parser.add_argument("--debug-json", help="Save debug info to JSON file (single-file mode)")
+    parser.add_argument("--debug-full", action="store_true",
+                        help="Include raw per-page OCR text in debug JSON (requires --debug-json)")
+    args = parser.parse_args()
+
+    if not os.path.isfile(args.template):
+        print(f"ERROR: Template not found: {args.template}"); sys.exit(1)
+
+    # ── Batch mode ──────────────────────────────────────────────────
+    if args.batch:
+        if not os.path.isdir(args.batch):
+            print(f"ERROR: Batch directory not found: {args.batch}"); sys.exit(1)
+        pdfs = sorted(
+            p for p in (os.path.join(args.batch, f) for f in os.listdir(args.batch))
+            if p.lower().endswith(".pdf") and os.path.isfile(p)
+        )
+        if not pdfs:
+            print(f"ERROR: No PDF files found in {args.batch}"); sys.exit(1)
+
+        out_dir = args.output_dir or None
+        if out_dir and not os.path.isdir(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
+
+        print(f"Batch mode: {len(pdfs)} PDF(s) found in {args.batch}")
+        for pdf_path in pdfs:
+            date_str = _extract_date_from_filename(pdf_path)
+            dest_dir = out_dir or os.path.dirname(pdf_path)
+            out_path = os.path.join(dest_dir, f"Bandwidth Report (MAX) For {date_str}.xlsx")
+            print(f"\n[BATCH] {os.path.basename(pdf_path)}  ->  date={date_str}")
+            try:
+                data = extract_all_graphs(
+                    pdf_path, dpi=args.dpi,
+                    warn_duplicates=args.warn_duplicates,
+                    collect_raw_ocr=args.debug_full,
+                )
+                _print_summary(data)
+                generate_report(args.template, data["results"], out_path, date_str)
+                print(f"  Output: {out_path}")
+            except Exception as exc:
+                print(f"  ERROR processing {pdf_path}: {exc}")
+        return
+
+    # ── Single-file mode ─────────────────────────────────────────────
+    if not args.pdf:
+        print("ERROR: --pdf is required in single-file mode (or use --batch DIR)"); sys.exit(1)
+    if not os.path.isfile(args.pdf):
+        print(f"ERROR: PDF not found: {args.pdf}"); sys.exit(1)
+
+    if not args.output:
+        date_str = args.date or datetime.now().strftime("%d %B %Y")
+        args.output = f"Bandwidth Report (MAX) For {date_str}.xlsx"
+
+    print(f"Extracting from: {args.pdf}")
+    data = extract_all_graphs(
+        args.pdf, dpi=args.dpi,
+        warn_duplicates=args.warn_duplicates,
+        collect_raw_ocr=args.debug_full,
+    )
+    _print_summary(data)
     generate_report(args.template, data["results"], args.output, args.date)
     print(f"\nOutput: {args.output}")
 
     if args.debug_json:
-        debug = {
-            "results": {k: {"mbps": v["mbps"], "desc": v["desc"]} for k, v in data["results"].items()},
-            "unmatched": [{"page": g["page"], "title": g["title"], "max_mbps": g["max_mbps"]} for g in data["unmatched"]],
-            "could_not_open": data["could_not_open"],
-        }
-        with open(args.debug_json, "w") as f:
-            json.dump(debug, f, indent=2)
-        print(f"Debug JSON: {args.debug_json}")
+        _save_debug_json(data, args.debug_json, full=args.debug_full)
 
 
 # =====================================================================
 # SECTION 6 — GUI (tkinter)
 # =====================================================================
+
+_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".mrtg_report_config.json")
+
+
+def _load_gui_config() -> dict:
+    """Load persisted GUI settings from ~/.mrtg_report_config.json."""
+    try:
+        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_gui_config(cfg: dict):
+    """Persist GUI settings to ~/.mrtg_report_config.json."""
+    try:
+        with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as exc:
+        log.warning(f"Could not save GUI config: {exc}")
+
 
 def run_gui():
     import tkinter as tk
@@ -939,69 +1099,112 @@ def run_gui():
         def __init__(self, root):
             self.root = root
             self.root.title("MRTG Bandwidth Report Generator")
-            self.root.geometry("850x720")
-            self.root.minsize(700, 550)
-            self.pdf_path = tk.StringVar()
-            self.template_path = tk.StringVar()
-            self.output_path = tk.StringVar()
-            self.report_date = tk.StringVar(value=datetime.now().strftime("%d %B %Y"))
-            self.dpi = tk.IntVar(value=250)
-            self.running = False
-            self._output_manually_set = False  # True only when user explicitly Browses Output
+            self.root.geometry("880x760")
+            self.root.minsize(720, 580)
+
+            # Shared state
+            cfg = _load_gui_config()
+            self.template_path  = tk.StringVar(value=cfg.get("template_path", ""))
+            self.dpi            = tk.IntVar(value=cfg.get("dpi", 250))
+            self.warn_dups      = tk.BooleanVar(value=cfg.get("warn_duplicates", False))
+            self.running        = False
+
+            # Single-file state
+            self.pdf_path       = tk.StringVar(value=cfg.get("pdf_path", ""))
+            self.output_path    = tk.StringVar()
+            self.report_date    = tk.StringVar(value=datetime.now().strftime("%d %B %Y"))
+            self._output_manually_set = False
             self.report_date.trace_add("write", self._on_date_changed)
-            self._last_unfilled = []  # populated after each run; list of (row, desc)
+            self._last_unfilled = []
+
+            # Batch state
+            self.batch_dir      = tk.StringVar(value=cfg.get("batch_dir", ""))
+            self.batch_out_dir  = tk.StringVar(value=cfg.get("batch_out_dir", ""))
+
             self._build_ui()
+            # Restore auto output path after UI is built
+            if self.pdf_path.get():
+                self.output_path.set(self._auto_output_path())
+
+        # ── Config persistence ─────────────────────────────────────────
+
+        def _persist_config(self):
+            _save_gui_config({
+                "pdf_path":       self.pdf_path.get(),
+                "template_path":  self.template_path.get(),
+                "dpi":            self.dpi.get(),
+                "warn_duplicates": self.warn_dups.get(),
+                "batch_dir":      self.batch_dir.get(),
+                "batch_out_dir":  self.batch_out_dir.get(),
+            })
+
+        # ── UI construction ────────────────────────────────────────────
 
         def _build_ui(self):
-            main = ttk.Frame(self.root, padding=12)
-            main.pack(fill=tk.BOTH, expand=True)
+            outer = ttk.Frame(self.root, padding=10)
+            outer.pack(fill=tk.BOTH, expand=True)
 
-            ttk.Label(main, text="MRTG Bandwidth Report Generator",
-                      font=("Helvetica", 16, "bold")).pack(pady=(0, 10))
+            ttk.Label(outer, text="MRTG Bandwidth Report Generator",
+                      font=("Helvetica", 15, "bold")).pack(pady=(0, 8))
 
-            # Input section
-            inp = ttk.LabelFrame(main, text="Input Files", padding=8)
-            inp.pack(fill=tk.X, pady=4)
+            # Shared: template + DPI + options
+            shared = ttk.LabelFrame(outer, text="Shared Settings", padding=8)
+            shared.pack(fill=tk.X, pady=4)
 
-            r1 = ttk.Frame(inp); r1.pack(fill=tk.X, pady=2)
-            ttk.Label(r1, text="Input PDF:", width=14, anchor="e").pack(side=tk.LEFT)
-            ttk.Entry(r1, textvariable=self.pdf_path, width=50).pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
-            ttk.Button(r1, text="Browse...", command=self._browse_pdf).pack(side=tk.LEFT)
+            rs1 = ttk.Frame(shared); rs1.pack(fill=tk.X, pady=2)
+            ttk.Label(rs1, text="Template XLSX:", width=16, anchor="e").pack(side=tk.LEFT)
+            ttk.Entry(rs1, textvariable=self.template_path, width=52).pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+            ttk.Button(rs1, text="Browse...", command=self._browse_template).pack(side=tk.LEFT)
 
-            r2 = ttk.Frame(inp); r2.pack(fill=tk.X, pady=2)
-            ttk.Label(r2, text="Template XLSX:", width=14, anchor="e").pack(side=tk.LEFT)
-            ttk.Entry(r2, textvariable=self.template_path, width=50).pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
-            ttk.Button(r2, text="Browse...", command=self._browse_template).pack(side=tk.LEFT)
+            rs2 = ttk.Frame(shared); rs2.pack(fill=tk.X, pady=2)
+            ttk.Label(rs2, text="DPI:", width=16, anchor="e").pack(side=tk.LEFT)
+            ttk.Spinbox(rs2, from_=100, to=400, textvariable=self.dpi, width=8).pack(side=tk.LEFT, padx=4)
+            ttk.Label(rs2, text="(higher = better OCR, slower)").pack(side=tk.LEFT, padx=6)
+            ttk.Checkbutton(rs2, text="Warn on duplicate rows",
+                            variable=self.warn_dups,
+                            command=self._persist_config).pack(side=tk.LEFT, padx=16)
 
-            # Output section
-            out = ttk.LabelFrame(main, text="Output Settings", padding=8)
-            out.pack(fill=tk.X, pady=4)
+            # Tab notebook: Single File / Batch
+            nb = ttk.Notebook(outer)
+            nb.pack(fill=tk.BOTH, expand=True, pady=4)
 
-            r3 = ttk.Frame(out); r3.pack(fill=tk.X, pady=2)
-            ttk.Label(r3, text="Report Date:", width=14, anchor="e").pack(side=tk.LEFT)
-            ttk.Entry(r3, textvariable=self.report_date, width=30).pack(side=tk.LEFT, padx=4)
+            self._build_single_tab(nb)
+            self._build_batch_tab(nb)
 
-            r4 = ttk.Frame(out); r4.pack(fill=tk.X, pady=2)
-            ttk.Label(r4, text="Output File:", width=14, anchor="e").pack(side=tk.LEFT)
-            ttk.Entry(r4, textvariable=self.output_path, width=50).pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
-            ttk.Button(r4, text="Browse...", command=self._browse_output).pack(side=tk.LEFT)
-
-            r5 = ttk.Frame(out); r5.pack(fill=tk.X, pady=2)
-            ttk.Label(r5, text="DPI:", width=14, anchor="e").pack(side=tk.LEFT)
-            ttk.Spinbox(r5, from_=100, to=400, textvariable=self.dpi, width=8).pack(side=tk.LEFT, padx=4)
-            ttk.Label(r5, text="(higher = better OCR, slower)").pack(side=tk.LEFT, padx=4)
-
-            # Progress
-            pf = ttk.Frame(main); pf.pack(fill=tk.X, pady=6)
+            # Progress (shared)
+            pf = ttk.Frame(outer); pf.pack(fill=tk.X, pady=4)
             self.progress_var = tk.DoubleVar()
             ttk.Progressbar(pf, variable=self.progress_var, maximum=100).pack(
                 fill=tk.X, side=tk.LEFT, expand=True, padx=(0, 8))
-            self.progress_label = ttk.Label(pf, text="Ready", width=30)
+            self.progress_label = ttk.Label(pf, text="Ready", width=32)
             self.progress_label.pack(side=tk.LEFT)
 
-            # Buttons
-            bf = ttk.Frame(main); bf.pack(pady=6)
-            self.run_btn = ttk.Button(bf, text="Generate Report", command=self._run)
+            # Log (shared)
+            lf = ttk.LabelFrame(outer, text="Processing Log", padding=4)
+            lf.pack(fill=tk.BOTH, expand=True, pady=4)
+            self.log_text = scrolledtext.ScrolledText(lf, height=12, font=("Courier", 9))
+            self.log_text.pack(fill=tk.BOTH, expand=True)
+
+        def _build_single_tab(self, nb):
+            tab = ttk.Frame(nb, padding=8)
+            nb.add(tab, text="Single File")
+
+            r1 = ttk.Frame(tab); r1.pack(fill=tk.X, pady=3)
+            ttk.Label(r1, text="Input PDF:", width=14, anchor="e").pack(side=tk.LEFT)
+            ttk.Entry(r1, textvariable=self.pdf_path, width=52).pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+            ttk.Button(r1, text="Browse...", command=self._browse_pdf).pack(side=tk.LEFT)
+
+            r2 = ttk.Frame(tab); r2.pack(fill=tk.X, pady=3)
+            ttk.Label(r2, text="Report Date:", width=14, anchor="e").pack(side=tk.LEFT)
+            ttk.Entry(r2, textvariable=self.report_date, width=30).pack(side=tk.LEFT, padx=4)
+
+            r3 = ttk.Frame(tab); r3.pack(fill=tk.X, pady=3)
+            ttk.Label(r3, text="Output File:", width=14, anchor="e").pack(side=tk.LEFT)
+            ttk.Entry(r3, textvariable=self.output_path, width=52).pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+            ttk.Button(r3, text="Browse...", command=self._browse_output).pack(side=tk.LEFT)
+
+            bf = ttk.Frame(tab); bf.pack(pady=6)
+            self.run_btn = ttk.Button(bf, text="Generate Report", command=self._run_single)
             self.run_btn.pack(side=tk.LEFT, padx=4)
             ttk.Button(bf, text="View Mapping", command=self._show_mapping).pack(side=tk.LEFT, padx=4)
             self.copy_unmatched_btn = ttk.Button(
@@ -1010,14 +1213,33 @@ def run_gui():
             self.copy_unmatched_btn.pack(side=tk.LEFT, padx=4)
             ttk.Button(bf, text="Help", command=self._show_help).pack(side=tk.LEFT, padx=4)
 
-            # Log
-            lf = ttk.LabelFrame(main, text="Processing Log", padding=4)
-            lf.pack(fill=tk.BOTH, expand=True, pady=4)
-            self.log_text = scrolledtext.ScrolledText(lf, height=14, font=("Courier", 9))
-            self.log_text.pack(fill=tk.BOTH, expand=True)
+        def _build_batch_tab(self, nb):
+            tab = ttk.Frame(nb, padding=8)
+            nb.add(tab, text="Batch Mode")
+
+            r1 = ttk.Frame(tab); r1.pack(fill=tk.X, pady=3)
+            ttk.Label(r1, text="PDFs Directory:", width=16, anchor="e").pack(side=tk.LEFT)
+            ttk.Entry(r1, textvariable=self.batch_dir, width=52).pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+            ttk.Button(r1, text="Browse...", command=self._browse_batch_dir).pack(side=tk.LEFT)
+
+            r2 = ttk.Frame(tab); r2.pack(fill=tk.X, pady=3)
+            ttk.Label(r2, text="Output Dir:", width=16, anchor="e").pack(side=tk.LEFT)
+            ttk.Entry(r2, textvariable=self.batch_out_dir, width=52).pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+            ttk.Button(r2, text="Browse...", command=self._browse_batch_out_dir).pack(side=tk.LEFT)
+            ttk.Label(r2, text="(blank = same dir as each PDF)", foreground="gray").pack(side=tk.LEFT, padx=6)
+
+            ttk.Label(tab,
+                text="Dates are auto-detected from each PDF's filename.\n"
+                     "Output files are named: Bandwidth Report (MAX) For {date}.xlsx",
+                foreground="gray").pack(pady=(4, 0), anchor="w")
+
+            bf = ttk.Frame(tab); bf.pack(pady=8)
+            self.batch_run_btn = ttk.Button(bf, text="Run Batch", command=self._run_batch)
+            self.batch_run_btn.pack(side=tk.LEFT, padx=4)
+
+        # ── Browse helpers ─────────────────────────────────────────────
 
         def _auto_output_path(self):
-            """Return the auto-generated output path based on current PDF dir + report date."""
             pdf = self.pdf_path.get()
             if not pdf:
                 return ""
@@ -1025,7 +1247,6 @@ def run_gui():
             return os.path.join(os.path.dirname(pdf), f"Bandwidth Report (MAX) For {d}.xlsx")
 
         def _on_date_changed(self, *_):
-            """Keep auto-generated output filename in sync when date field changes."""
             if not self._output_manually_set:
                 self.output_path.set(self._auto_output_path())
 
@@ -1034,21 +1255,37 @@ def run_gui():
                                            filetypes=[("PDF", "*.pdf"), ("All", "*.*")])
             if p:
                 self.pdf_path.set(p)
-                self._output_manually_set = False  # reset — auto mode
+                self._output_manually_set = False
                 self.output_path.set(self._auto_output_path())
+                self._persist_config()
 
         def _browse_template(self):
             p = filedialog.askopenfilename(title="Select Template XLSX",
                                            filetypes=[("Excel", "*.xlsx"), ("All", "*.*")])
             if p:
                 self.template_path.set(p)
+                self._persist_config()
 
         def _browse_output(self):
             p = filedialog.asksaveasfilename(title="Save Output As", defaultextension=".xlsx",
                                              filetypes=[("Excel", "*.xlsx"), ("All", "*.*")])
             if p:
-                self._output_manually_set = True  # user took control of path
+                self._output_manually_set = True
                 self.output_path.set(p)
+
+        def _browse_batch_dir(self):
+            p = filedialog.askdirectory(title="Select directory containing PDFs")
+            if p:
+                self.batch_dir.set(p)
+                self._persist_config()
+
+        def _browse_batch_out_dir(self):
+            p = filedialog.askdirectory(title="Select output directory for xlsx files")
+            if p:
+                self.batch_out_dir.set(p)
+                self._persist_config()
+
+        # ── Logging / progress ─────────────────────────────────────────
 
         def _log(self, msg):
             self.log_text.insert(tk.END, msg + "\n")
@@ -1059,7 +1296,9 @@ def run_gui():
             self.progress_label.config(text=msg)
             self.root.update_idletasks()
 
-        def _run(self):
+        # ── Single-file run ────────────────────────────────────────────
+
+        def _run_single(self):
             if self.running:
                 return
             pdf = self.pdf_path.get()
@@ -1067,6 +1306,7 @@ def run_gui():
             out = self.output_path.get()
             date = self.report_date.get()
             dpi = self.dpi.get()
+            warn_dups = self.warn_dups.get()
 
             if not pdf or not os.path.isfile(pdf):
                 messagebox.showerror("Error", "Please select a valid input PDF."); return
@@ -1080,14 +1320,16 @@ def run_gui():
             self.log_text.delete("1.0", tk.END)
             self._log(f"PDF: {pdf}")
             self._log(f"Template: {tpl}")
-            self._log(f"DPI: {dpi}\n")
+            self._log(f"DPI: {dpi}  |  Warn duplicates: {warn_dups}\n")
 
             def worker():
                 try:
-                    data = extract_all_graphs(pdf, dpi=dpi,
-                        progress_cb=lambda c, t, m: self.root.after(0, self._progress, c, t, m))
-
-                    self.root.after(0, self._log, f"\n--- Extraction Complete ---")
+                    data = extract_all_graphs(
+                        pdf, dpi=dpi,
+                        warn_duplicates=warn_dups,
+                        progress_cb=lambda c, t, m: self.root.after(0, self._progress, c, t, m),
+                    )
+                    self.root.after(0, self._log, "\n--- Extraction Complete ---")
                     self.root.after(0, self._log, f"Matched:  {len(data['results'])}")
                     self.root.after(0, self._log, f"Unmatched: {len(data['unmatched'])}")
                     self.root.after(0, self._log, f"Could not open: {data['could_not_open']}")
@@ -1109,7 +1351,6 @@ def run_gui():
                     self.root.after(0, self._log, f"\nSaved: {out}")
                     self.root.after(0, self._progress, 100, 100, "Done!")
 
-                    # Build unfilled row list for the Copy Unmatched button
                     _row_desc = {row: desc for _, row, desc in GRAPH_TO_ROW_MAP}
                     unfilled = [
                         (ref, _row_desc.get(ref, "—"))
@@ -1131,6 +1372,79 @@ def run_gui():
                     self.root.after(0, lambda: self.run_btn.config(state="normal"))
 
             threading.Thread(target=worker, daemon=True).start()
+
+        # ── Batch run ──────────────────────────────────────────────────
+
+        def _run_batch(self):
+            if self.running:
+                return
+            batch_dir = self.batch_dir.get()
+            tpl = self.template_path.get()
+            out_dir = self.batch_out_dir.get() or None
+            dpi = self.dpi.get()
+            warn_dups = self.warn_dups.get()
+
+            if not batch_dir or not os.path.isdir(batch_dir):
+                messagebox.showerror("Error", "Please select a valid PDFs directory."); return
+            if not tpl or not os.path.isfile(tpl):
+                messagebox.showerror("Error", "Please select a valid template XLSX."); return
+
+            pdfs = sorted(
+                p for p in (os.path.join(batch_dir, f) for f in os.listdir(batch_dir))
+                if p.lower().endswith(".pdf") and os.path.isfile(p)
+            )
+            if not pdfs:
+                messagebox.showerror("Error", f"No PDF files found in:\n{batch_dir}"); return
+
+            if out_dir and not os.path.isdir(out_dir):
+                os.makedirs(out_dir, exist_ok=True)
+
+            self.running = True
+            self.batch_run_btn.config(state="disabled")
+            self.log_text.delete("1.0", tk.END)
+            self._log(f"Batch dir: {batch_dir}")
+            self._log(f"Template:  {tpl}")
+            self._log(f"Output to: {out_dir or '(same as each PDF)'}")
+            self._log(f"DPI: {dpi}  |  PDFs found: {len(pdfs)}\n")
+
+            def batch_worker():
+                ok, failed = 0, 0
+                for i, pdf_path in enumerate(pdfs):
+                    date_str = _extract_date_from_filename(pdf_path)
+                    dest_dir = out_dir or os.path.dirname(pdf_path)
+                    out_path = os.path.join(dest_dir,
+                        f"Bandwidth Report (MAX) For {date_str}.xlsx")
+                    self.root.after(0, self._progress, i + 1, len(pdfs),
+                                    f"{i+1}/{len(pdfs)}: {os.path.basename(pdf_path)}")
+                    self.root.after(0, self._log,
+                        f"\n[{i+1}/{len(pdfs)}] {os.path.basename(pdf_path)}  (date: {date_str})")
+                    try:
+                        data = extract_all_graphs(
+                            pdf_path, dpi=dpi, warn_duplicates=warn_dups,
+                        )
+                        self.root.after(0, self._log,
+                            f"  Matched: {len(data['results'])}  "
+                            f"Unmatched: {len(data['unmatched'])}  "
+                            f"CantOpen: {data['could_not_open']}")
+                        generate_report(tpl, data["results"], out_path, date_str)
+                        self.root.after(0, self._log, f"  -> {out_path}")
+                        ok += 1
+                    except Exception as exc:
+                        self.root.after(0, self._log, f"  ERROR: {exc}")
+                        failed += 1
+
+                self.root.after(0, self._progress, 100, 100, "Batch done!")
+                self.root.after(0, self._log,
+                    f"\nBatch complete: {ok} succeeded, {failed} failed.")
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Batch Complete",
+                    f"{ok} report(s) generated.\n{failed} failed.\nCheck the log for details."))
+                self.running = False
+                self.root.after(0, lambda: self.batch_run_btn.config(state="normal"))
+
+            threading.Thread(target=batch_worker, daemon=True).start()
+
+        # ── Helpers ────────────────────────────────────────────────────
 
         def _copy_unmatched(self):
             if not self._last_unfilled:
@@ -1166,14 +1480,18 @@ def run_gui():
         def _show_help(self):
             messagebox.showinfo("Help",
                 "MRTG Bandwidth Report Generator\n\n"
-                "1. Select the input PDF containing MRTG/Cacti graphs\n"
-                "2. Select the template XLSX (previous day's report)\n"
-                "3. Set the report date\n"
-                "4. Click 'Generate Report'\n\n"
-                "The tool uses OCR (Tesseract) to read graph statistics\n"
-                "and maps them to spreadsheet rows.\n\n"
-                "To customize graph-to-row mapping, edit the\n"
-                "GRAPH_TO_ROW_MAP list in the Python script.\n\n"
+                "Single File tab:\n"
+                "  1. Select the input PDF containing MRTG/Cacti graphs\n"
+                "  2. Select the template XLSX (previous day's report)\n"
+                "  3. Set the report date\n"
+                "  4. Click 'Generate Report'\n\n"
+                "Batch Mode tab:\n"
+                "  1. Select a directory containing multiple PDFs\n"
+                "  2. Select the template XLSX\n"
+                "  3. Optionally set an output directory\n"
+                "  4. Click 'Run Batch' — dates are auto-detected from filenames\n\n"
+                "Shared settings (template, DPI, warn-duplicates) apply to both modes.\n"
+                "Settings are remembered between sessions.\n\n"
                 "CLI mode: python mrtg_bandwidth_report.py --cli --help")
 
     root = tk.Tk()
