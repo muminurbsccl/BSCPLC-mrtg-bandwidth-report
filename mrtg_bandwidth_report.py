@@ -939,6 +939,7 @@ def run_gui():
             self.running = False
             self._output_manually_set = False  # True only when user explicitly Browses Output
             self.report_date.trace_add("write", self._on_date_changed)
+            self._last_unfilled = []  # populated after each run; list of (row, desc)
             self._build_ui()
 
         def _build_ui(self):
@@ -993,6 +994,10 @@ def run_gui():
             self.run_btn = ttk.Button(bf, text="Generate Report", command=self._run)
             self.run_btn.pack(side=tk.LEFT, padx=4)
             ttk.Button(bf, text="View Mapping", command=self._show_mapping).pack(side=tk.LEFT, padx=4)
+            self.copy_unmatched_btn = ttk.Button(
+                bf, text="Copy Unmatched Entries",
+                command=self._copy_unmatched, state="disabled")
+            self.copy_unmatched_btn.pack(side=tk.LEFT, padx=4)
             ttk.Button(bf, text="Help", command=self._show_help).pack(side=tk.LEFT, padx=4)
 
             # Log
@@ -1093,6 +1098,18 @@ def run_gui():
                     generate_report(tpl, data["results"], out, date)
                     self.root.after(0, self._log, f"\nSaved: {out}")
                     self.root.after(0, self._progress, 100, 100, "Done!")
+
+                    # Build unfilled row list for the Copy Unmatched button
+                    _row_desc = {row: desc for _, row, desc in GRAPH_TO_ROW_MAP}
+                    unfilled = [
+                        (ref, _row_desc.get(ref, "—"))
+                        for ref in EXPECTED_E_ROWS
+                        if ref not in data["results"]
+                    ]
+                    self._last_unfilled = unfilled
+                    self.root.after(0, lambda: self.copy_unmatched_btn.config(
+                        state="normal" if unfilled else "disabled"))
+
                     self.root.after(0, lambda: messagebox.showinfo("Success",
                         f"Report generated!\n\nMatched: {len(data['results'])}\n"
                         f"Unmatched: {len(data['unmatched'])}\nSaved: {out}"))
@@ -1104,6 +1121,22 @@ def run_gui():
                     self.root.after(0, lambda: self.run_btn.config(state="normal"))
 
             threading.Thread(target=worker, daemon=True).start()
+
+        def _copy_unmatched(self):
+            if not self._last_unfilled:
+                messagebox.showinfo("Copy Unmatched", "No unmatched entries to copy.")
+                return
+            lines = ["Row\tClient\tReason"]
+            for ref, desc in self._last_unfilled:
+                lines.append(f"{ref}\t{desc}\tNo graph in this PDF")
+            text = "\n".join(lines)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            messagebox.showinfo(
+                "Copied",
+                f"{len(self._last_unfilled)} unmatched entries copied to clipboard.\n\n"
+                "Format: Row | Client | Reason\n"
+                "(Tab-separated, paste directly into Excel or Notepad)")
 
         def _show_mapping(self):
             win = tk.Toplevel(self.root)
