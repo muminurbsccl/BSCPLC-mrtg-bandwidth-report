@@ -289,21 +289,21 @@ Write-Host "Installation complete! Run: py -3 mrtg_bandwidth_report.py"
 
 ## Quick Install (one-liner)
 
-If you already have Python and a package manager installed:
+If you already have Python, Git, and a package manager installed:
 
 **macOS:**
 ```bash
-brew install tesseract poppler && pip install openpyxl pdf2image pytesseract Pillow
+git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git && cd BSCPLC-mrtg-bandwidth-report && brew install tesseract poppler && pip3 install openpyxl pdf2image pytesseract Pillow && python3 mrtg_bandwidth_report.py
 ```
 
 **Ubuntu / Debian:**
 ```bash
-sudo apt install -y tesseract-ocr poppler-utils python3-tk && pip install openpyxl pdf2image pytesseract Pillow
+git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git && cd BSCPLC-mrtg-bandwidth-report && sudo apt install -y tesseract-ocr poppler-utils python3-tk && pip3 install openpyxl pdf2image pytesseract Pillow && python3 mrtg_bandwidth_report.py
 ```
 
-**Windows (winget):**
+**Windows (winget — run in PowerShell):**
 ```powershell
-winget install UB-Mannheim.TesseractOCR oschwartz10612.Poppler; pip install openpyxl pdf2image pytesseract Pillow
+git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git; cd BSCPLC-mrtg-bandwidth-report; winget install UB-Mannheim.TesseractOCR oschwartz10612.Poppler; pip install openpyxl pdf2image pytesseract Pillow; py -3 mrtg_bandwidth_report.py
 ```
 
 ---
