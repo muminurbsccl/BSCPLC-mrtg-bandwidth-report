@@ -98,7 +98,7 @@ GRAPH_TO_ROW_MAP = [
     (r"INTRAGLOBE.*IPT|Intraglobe.*IPT", "E20", "Intraglobe KKT IIG"),
     (r"GMax-IPT|GMAX.*IPT|GMax.*IPT", "E21", "Green Max COX IIG"),
     (r"BD.?LINK.*(?:IIG|DC)|BDLINK.*DC", "E22", "BD-LINK DHK"),
-    (r"ADNGateway.*SEC|ADN.*Gateway.*SEC|ADN.*GW.*SEC", "E24", "ADN-GW DHK-Secondary"),
+    (r"ADNGateway.*SEC|ADN.*Gateway.*SEC|ADN.*GW.*SEC|ADN.*TEJ", "E24", "ADN-GW DHK-Secondary"),
     (r"ADNGateway|ADN.*Gateway", "E23", "ADN-GW DHK-Primary"),
     (r"REGO.COX.IIG|REGO_COX_IIG|REGO.*COX.*IIG", "E25", "Rego COX IIG"),
     (r"REGO-IIG|REGO.*IIG(?!.*COX)", "E26", "Rego KKT IIG"),
@@ -115,7 +115,7 @@ GRAPH_TO_ROW_MAP = [
     (r"COL.CTG.Pri|COL.*CTG.*Pri|COL.CTG.BE|COL.*CTG.*BE", "E36", "COL CTG-Primary"),
     (r"COL.CTG.SEC|COL.*CTG.*SEC|COL.CTG.Sec", "E37", "COL CTG-Secondary"),
     (r"COXLINKT|COX.?LINK.*COX", "E38", "COX-Link COX"),
-    (r"SSOnline.*Cloud|SS.?Online.*Cloud|SSOnline.*DC|SS.?Online.*DC", "E39", "SS Online DHK-Primary"),
+    (r"SSOnline.*Cloud(?!flare)|SS.?Online.*Cloud(?!flare)|SSOnline.*DC|SS.?Online.*DC", "E39", "SS Online DHK-Primary"),
     (r"BDREN.*PRI|BDREN.*DHK.*03.*TO.*CGS|BDREN-DHK.*CGS", "E41", "BDREN DHK-Primary"),
     (r"BDREN.*SEC(?!.*Equinix)", "E42", "BDREN DHK-Secondary"),
     (r"BDCCL|BD.?CCL", "E43", "BDCCL DHK"),
@@ -362,6 +362,7 @@ _FUZZY_TOKEN_MAP = [
     ({"GMAX", "IPT"},              "E21", "Green Max COX IIG (fuzzy)"),
     ({"BDLINK"},                    "E22", "BD-LINK DHK (fuzzy)"),
     ({"ADN", "GATEWAY", "SEC"},    "E24", "ADN-GW DHK-Secondary (fuzzy)"),
+    ({"ADN", "TEJ"},               "E24", "ADN-GW DHK-Secondary (fuzzy)"),
     ({"ADN", "GATEWAY"},           "E23", "ADN-GW DHK-Primary (fuzzy)"),
     ({"REGO", "COX", "IIG"},       "E25", "Rego COX IIG (fuzzy)"),
     ({"REGO", "IIG"},              "E26", "Rego KKT IIG (fuzzy)"),
@@ -633,10 +634,19 @@ def _correct_value_pair(in_mbps: float, out_mbps: float, allocated: float, suspe
         return val, False
 
     new_in,  fixed_in  = fix_high(in_mbps)
+    new_out, fixed_out = fix_high(out_mbps)
+
+    # Revert a single-direction fix_high when the corrected value falls below the
+    # other direction's raw value — indicates a false positive (legitimate traffic
+    # burst rather than an OCR decimal-drop error, e.g. 167.53M on a ~15M allocated
+    # link would be reduced to 16.75M, then max(16.75, 69.97)=69.97 selected).
+    if fixed_in and not fixed_out and new_in is not None and out_mbps is not None and new_in < out_mbps:
+        new_in, fixed_in = in_mbps, False
+    elif fixed_out and not fixed_in and new_out is not None and in_mbps is not None and new_out < in_mbps:
+        new_out, fixed_out = out_mbps, False
+
     if not fixed_in:
         new_in,  fixed_in  = fix_low(in_mbps,  suspect)
-
-    new_out, fixed_out = fix_high(out_mbps)
     if not fixed_out:
         new_out, fixed_out = fix_low(out_mbps, suspect)
 

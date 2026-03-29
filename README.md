@@ -397,7 +397,7 @@ This tool uses OCR to read text from graph images, which has inherent limitation
 - Unit letters (M/G/k) may be missed or misread by OCR — full unit strings (`Mbps`, `Gbps`, `kbps`) are also handled automatically
 - Common OCR character substitutions (`@` → `0`, `[` → `I`, `|` → `l`, `]` → `)`) are automatically corrected before pattern matching
 - **OCR-tolerant direction matching** — garbled direction keywords (`lnbound`, `0utbound`, `1nbound`) are detected and matched correctly
-- **Decimal-drop correction:** Values wildly exceeding allocated bandwidth (>10x) are automatically corrected by dividing until plausible (e.g. 293,000 Mbps → 14,560 Mbps); corrected cells are highlighted blue
+- **Decimal-drop correction:** Values wildly exceeding allocated bandwidth (>10x) are automatically corrected by dividing until plausible (e.g. 293,000 Mbps → 14,560 Mbps); corrected cells are highlighted blue. A false-positive safeguard prevents over-correction: if only one traffic direction triggers the correction and the corrected value falls below the other direction's raw value, the correction is reverted (e.g. a legitimate 167.53 Mbps burst on a small-allocated link is preserved instead of being divided to 16.75 Mbps)
 - **Cache cell accumulation:** Multiple cache graphs (e.g. Exabyte TEJ + DC + EDGENEXT) are summed rather than taking the maximum, for accurate totals
 - **Expanded interface detection:** Recognises `GigabitEthernet`, `Gi0/0`, `Te0/0`, `FortyGigE`, `TwentyFiveGig` in addition to `Bundle-Ether`, `TenGigE`, `HundredGigE`
 - **Fuzzy fallback matching:** 65-entry token map covers all client rows as a last resort when regex patterns fail
@@ -417,7 +417,7 @@ mrtg-bandwidth-report/
 ├── tests/
 │   ├── __init__.py
 │   ├── test_fill_logic.py          # Unit tests for traffic-light fill logic
-│   └── test_extraction_fixes.py    # Regression tests for extraction pipeline (36 tests)
+│   └── test_extraction_fixes.py    # Regression tests for extraction pipeline (49 tests)
 ├── README.md                   # This file
 ├── screenshots/                # Documentation images
 │   ├── gui_screenshot.png

@@ -239,3 +239,38 @@ def test_value_found_beyond_30_lines():
     assert len(graphs) >= 1
     assert graphs[0]["inbound_max"] is not None
     assert abs(graphs[0]["inbound_max"] - 99.0) < 0.1
+
+
+# ── Fix: E55 SSOnline-Cloudflare must not match E39 ───────────────────
+def test_ssonline_cloudflare_maps_to_e55_not_e39():
+    """Graph title 5-BSCPLC-DHK-CORE-03 - SSOnline-Cloudflare - Bundle-Ether655
+    must map to E55 (SS Online Cache DHK), not E39 (SS Online DHK-Primary)."""
+    row, desc = match_graph_to_row(
+        "5-BSCPLC-DHK-CORE-03 - SSOnline-Cloudflare - Bundle-Ether655"
+    )
+    assert row == "E55", f"Expected E55, got {row} ({desc})"
+
+
+# ── Fix: E24 ADN-TEJ-1 must map to ADN-GW DHK-Secondary ──────────────
+def test_adn_tej_maps_to_e24():
+    """Graph title 2-IPBW-BSCPLC-DHK-CORE-03 - ADN-TEJ-1 - Bundle-Ether655
+    must map to E24 (ADN-GW DHK-Secondary)."""
+    row, desc = match_graph_to_row(
+        "2-IPBW-BSCPLC-DHK-CORE-03 - ADN-TEJ-1 - Bundle-Ether655"
+    )
+    assert row == "E24", f"Expected E24, got {row} ({desc})"
+
+
+# ── Fix: fix_high false-positive revert preserves 167.53M over 69.97M ─
+def test_fix_high_false_positive_revert():
+    """When fix_high corrects one direction to below the other direction's raw
+    value, it should revert — 167.53M must not be reduced to 16.75M when
+    outbound is 69.97M and allocated is ~15M."""
+    from mrtg_bandwidth_report import _correct_value_pair
+    # Simulate: in=167.53M, out=69.97M, allocated=15M (11x = false-positive territory)
+    new_in, new_out, corrected = _correct_value_pair(167.53, 69.97, 15.0, False)
+    result = max(new_in, new_out)
+    assert result >= 167.53 - 0.01, (
+        f"Expected max >= 167.53M but got {result:.2f}M "
+        f"(new_in={new_in:.2f}, new_out={new_out:.2f}, corrected={corrected})"
+    )
