@@ -1,4 +1,4 @@
-# MRTG Bandwidth Report Generator
+# Daily Bandwidth Report Generator from PDF to OCR to XLSX Tool
 
 A Python desktop tool that automatically extracts bandwidth usage data from MRTG/Cacti graph PDFs and generates daily Bandwidth Report (MAX) Excel spreadsheets.
 
@@ -29,7 +29,6 @@ Each page of the input PDF contains 2-3 MRTG/Cacti bandwidth graphs with Inbound
 
 *Each graph shows traffic over 24 hours with Current, Average, and Maximum values for Inbound and Outbound.*
 
-![Sample Input Page](screenshots/sample_input_page2.png)
 
 ---
 
