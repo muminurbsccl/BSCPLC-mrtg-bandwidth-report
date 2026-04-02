@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+Automated MRTG Bandwidth Report Pipeline
+=========================================
+1. Opens Outlook web via Playwright Chromium
+2. Logs in and finds the latest "BSCPLC MRTG Report" email
+3. Opens Outlook's Print preview (three-dot → Print) and saves as PDF
+4. Runs the OCR report generator on the PDF
+5. Emails the .xlsx report to the recipient
+
+Requires: pip install playwright python-dotenv openpyxl pdf2image pytesseract Pillow
+Then run: playwright install chromium
+"""
+
+import os
+import sys
+import time
+import smtplib
+import logging
+import subprocess
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
+from datetime import datetime
+from pathlib import Path
+
+from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+load_dotenv(Path(__file__).parent / ".env")
+
+OUTLOOK_EMAIL = os.environ["OUTLOOK_EMAIL"]
+OUTLOOK_PASSWORD = os.environ["OUTLOOK_PASSWORD"]
+REPORT_RECIPIENT = os.environ["REPORT_RECIPIENT"]
+TEMPLATE_PATH = os.environ["TEMPLATE_PATH"]
+
+OUTLOOK_URL = "https://outlook.cloud.microsoft/mail/"
+EMAIL_SUBJECT = "BSCPLC MRTG Report"
+
+SCRIPT_DIR = Path(__file__).parent
+PDF_DIR = SCRIPT_DIR / "pdfs"
+REPORT_DIR = SCRIPT_DIR / "reports"
+
+# Ensure Tesseract and Poppler are on PATH
+_TESSERACT_DIR = r"C:\Program Files\Tesseract-OCR"
+_POPPLER_DIR = os.path.join(
+    os.environ.get("LOCALAPPDATA", ""),
+    r"Microsoft\WinGet\Packages\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe",
+    r"poppler-25.07.0\Library\bin",
+)
+for _dir in [_TESSERACT_DIR, _POPPLER_DIR]:
+    if os.path.isdir(_dir) and _dir not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _dir + os.pathsep + os.environ.get("PATH", "")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("auto_report")
+
+
+# ---------------------------------------------------------------------------
+# Step 1: Login to Outlook Web
+# ---------------------------------------------------------------------------
+def login_outlook(page):
+    """Log into Outlook web with email and password."""
+    log.info("Navigating to Outlook...")
+    page.goto("https://login.microsoftonline.com/")
+    page.wait_for_load_state("load")
+    time.sleep(2)
+
+    # Enter email
+    log.info("Entering email...")
+    page.fill('input[type="email"]', OUTLOOK_EMAIL)
+    page.click('input[type="submit"]')
+    page.wait_for_load_state("load")
+    time.sleep(3)
+
+    # Enter password
+    log.info("Entering password...")
+    page.fill('input[type="password"]', OUTLOOK_PASSWORD)
+    page.click('input[type="submit"]')
+    page.wait_for_load_state("load")
+    time.sleep(3)
+
+    # "Stay signed in?" prompt — click Yes
+    try:
+        page.click('input[id="idSIButton9"]', timeout=5000)
+    except Exception:
+        try:
+            page.click('input[id="idBtn_Back"]', timeout=3000)
+        except Exception:
+            pass
+
+    # Wait for M365 landing page
+    log.info("Waiting for Microsoft 365 to load...")
+    page.wait_for_load_state("load", timeout=60000)
+    time.sleep(5)
+
+    # Navigate to Outlook Mail
+    log.info("Navigating to Outlook Mail...")
+    page.goto(OUTLOOK_URL, wait_until="domcontentloaded", timeout=60000)
+    time.sleep(10)
+    log.info(f"Current URL: {page.url}")
+    log.info("Outlook loaded successfully.")
+
+
+# ---------------------------------------------------------------------------
+# Step 2: Find and open the latest MRTG report email
+# ---------------------------------------------------------------------------
+def find_and_open_email(page):
+    """Search for the latest BSCPLC MRTG Report email and open it."""
+    log.info(f"Searching for email with subject: {EMAIL_SUBJECT}")
+
+    # Use Outlook search
+    search_box = page.locator('input[aria-label="Search"]').first
+    if not search_box.is_visible(timeout=10000):
+        search_box = page.locator('[id="topSearchInput"]').first
+    search_box.click()
+    search_box.fill(EMAIL_SUBJECT)
+    page.keyboard.press("Enter")
+    time.sleep(5)
+
+    # Click the first (most recent) email in the results
+    log.info("Opening the latest matching email...")
+    first_email = page.locator(
+        f'[aria-label*="{EMAIL_SUBJECT}"], '
+        f'span:has-text("{EMAIL_SUBJECT}")'
+    ).first
+    first_email.click()
+    time.sleep(5)
+    log.info("Email opened.")
+
+
+# ---------------------------------------------------------------------------
+# Step 3: Print email to PDF via Outlook's Print preview
+# ---------------------------------------------------------------------------
+def print_email_to_pdf(page, context, pdf_path: Path):
+    """Click three-dot menu → Print in Outlook, then save the print preview as PDF."""
+    log.info("Opening Print preview...")
+
+    # Scroll down to load all embedded images in the email
+    for _ in range(15):
+        page.keyboard.press("PageDown")
+        time.sleep(0.5)
+    page.keyboard.press("Home")
+    time.sleep(2)
+
+    # Click three-dot "More actions" button near Reply/Reply all/Forward
+    # Try multiple selectors
+    clicked = False
+    for selector in [
+        'button[aria-label="More items"]',
+        'button[aria-label="More actions"]',
+        'button[aria-label="More mail actions"]',
+        'button[title="More actions"]',
+    ]:
+        try:
+            btn = page.locator(selector).first
+            if btn.is_visible(timeout=2000):
+                btn.click()
+                clicked = True
+                log.info(f"Clicked: {selector}")
+                break
+        except Exception:
+            continue
+
+    if not clicked:
+        page.screenshot(path=str(SCRIPT_DIR / "debug_no_menu.png"))
+        log.warning("Could not find three-dot menu. Will save page directly as PDF.")
+
+    time.sleep(1)
+
+    # Click "Print" in the dropdown menu — listen for popup before clicking
+    popup_page = None
+    if clicked:
+        time.sleep(1)
+        try:
+            with context.expect_page(timeout=10000) as new_page_info:
+                print_item = page.locator(
+                    '[role="menuitem"]:has-text("Print"), '
+                    'button:has-text("Print")'
+                ).first
+                print_item.click(timeout=5000)
+                log.info("Clicked Print menu item.")
+            popup_page = new_page_info.value
+            popup_page.wait_for_load_state("domcontentloaded", timeout=30000)
+            log.info(f"Print preview popup opened: {popup_page.url}")
+        except Exception as e:
+            log.info(f"No popup detected ({e}). Will use current page.")
+
+    time.sleep(3)
+
+    # Determine which page to save as PDF
+    print_page = popup_page
+    if not print_page:
+        all_pages = context.pages
+        if len(all_pages) > 1:
+            print_page = all_pages[-1]
+
+    if print_page and print_page != page:
+        print_page.wait_for_load_state("domcontentloaded", timeout=30000)
+        time.sleep(5)
+
+        # Scroll to load all content in print preview
+        for _ in range(10):
+            print_page.keyboard.press("PageDown")
+            time.sleep(0.3)
+        print_page.keyboard.press("Home")
+        time.sleep(1)
+
+        log.info(f"Print preview URL: {print_page.url}")
+        print_page.screenshot(path=str(SCRIPT_DIR / "debug_print_preview.png"), full_page=True)
+
+        # Use Chromium's page.pdf() on the print preview — clean email content only
+        print_page.pdf(
+            path=str(pdf_path),
+            format="A4",
+            print_background=True,
+            margin={"top": "0.4in", "bottom": "0.4in", "left": "0.4in", "right": "0.4in"},
+        )
+        log.info(f"PDF saved from print preview: {pdf_path}")
+        print_page.close()
+    else:
+        # Fallback: save the current page as PDF directly
+        log.info("No print preview popup detected. Saving current page as PDF...")
+        page.pdf(
+            path=str(pdf_path),
+            format="A4",
+            print_background=True,
+            margin={"top": "0.4in", "bottom": "0.4in", "left": "0.4in", "right": "0.4in"},
+        )
+        log.info(f"PDF saved from main page: {pdf_path}")
+
+    return pdf_path
+
+
+# ---------------------------------------------------------------------------
+# Step 4: Run the OCR report generator
+# ---------------------------------------------------------------------------
+def generate_report(pdf_path: Path, date_str: str):
+    """Run the MRTG bandwidth report generator on the saved PDF."""
+    log.info("Running OCR report generator...")
+    output_name = f"Bandwidth Report (MAX) For {date_str}.xlsx"
+    output_path = REPORT_DIR / output_name
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_DIR / "mrtg_bandwidth_report.py"),
+            "--cli",
+            "--pdf", str(pdf_path),
+            "--template", TEMPLATE_PATH,
+            "--date", date_str,
+            "--output", str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        log.error(f"Report generation failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+        raise RuntimeError(f"Report generation failed: {result.stdout} {result.stderr}")
+
+    log.info(f"Report generated: {output_path}")
+    log.info(result.stdout)
+    return output_path
+
+
+# ---------------------------------------------------------------------------
+# Step 5: Email the report
+# ---------------------------------------------------------------------------
+def email_report(report_path: Path, date_str: str):
+    """Send the generated report via Outlook SMTP to the recipient."""
+    log.info(f"Emailing report to {REPORT_RECIPIENT}...")
+
+    msg = MIMEMultipart()
+    msg["From"] = OUTLOOK_EMAIL
+    msg["To"] = REPORT_RECIPIENT
+    msg["Subject"] = f"Bandwidth Report (MAX) For {date_str}"
+
+    body = (
+        f"Hi,\n\n"
+        f"Please find the attached Bandwidth Report (MAX) for {date_str}.\n\n"
+        f"This report was generated automatically.\n\n"
+        f"Regards,\n"
+        f"BSCPLC IIG NOC"
+    )
+    msg.attach(MIMEText(body, "plain"))
+
+    # Attach the xlsx file
+    with open(report_path, "rb") as f:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(f.read())
+    encoders.encode_base64(part)
+    part.add_header(
+        "Content-Disposition",
+        f"attachment; filename={report_path.name}",
+    )
+    msg.attach(part)
+
+    # Send via Outlook SMTP
+    with smtplib.SMTP("smtp.office365.com", 587) as server:
+        server.starttls()
+        server.login(OUTLOOK_EMAIL, OUTLOOK_PASSWORD)
+        server.send_message(msg)
+
+    log.info("Report emailed successfully.")
+
+
+# ---------------------------------------------------------------------------
+# Main pipeline
+# ---------------------------------------------------------------------------
+def main():
+    today = datetime.now().strftime("%d %B %Y")
+    log.info(f"=== MRTG Auto Report Pipeline — {today} ===")
+
+    # Create output directories
+    PDF_DIR.mkdir(exist_ok=True)
+    REPORT_DIR.mkdir(exist_ok=True)
+
+    pdf_path = PDF_DIR / f"MRTG_Report_{datetime.now().strftime('%Y-%m-%d')}.pdf"
+
+    # --- Browser automation using Playwright Chromium ---
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+            ),
+        )
+        page = context.new_page()
+
+        login_outlook(page)
+        find_and_open_email(page)
+        print_email_to_pdf(page, context, pdf_path)
+
+        browser.close()
+
+    # --- Report generation ---
+    report_path = generate_report(pdf_path, today)
+
+    # --- Email delivery ---
+    email_report(report_path, today)
+
+    log.info("=== Pipeline complete ===")
+
+
+if __name__ == "__main__":
+    main()

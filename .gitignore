@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.xlsx
+!screenshots/*.png
+.env
+.venv/
+env/
+venv/
+*.log
+pdfs/
+reports/
+debug_*.png
+email_full_page.png
+tesseract-installer.exe
+tesseract.zip
+.DS_Store
+Thumbs.db
+
+# Internal planning / tooling docs — never pushed to GitHub
+docs/
+.claude/
+.omc/
+.serena/
+CLAUDE.md
+AGENTS.md
+*.prd.docx
+planning.md
+tasks.md
+
+# Debug/temp screenshots generated during development
+screenshots/output_*.png
+screenshots/patched_*.png

@@ -1,0 +1,549 @@
+# Daily Bandwidth Report Generator from PDF to OCR to XLSX Tool
+
+A Python desktop tool that automatically extracts bandwidth usage data from MRTG/Cacti graph PDFs and generates daily Bandwidth Report (MAX) Excel spreadsheets.
+
+![GUI Screenshot](screenshots/gui_screenshot.png)
+
+---
+
+## How It Works
+
+![Processing Pipeline](screenshots/pipeline.png)
+
+1. **PDF Input** — Accepts MRTG/Cacti daily graph PDFs (typically emailed from monitoring systems)
+2. **Image Conversion** — Converts each PDF page to high-resolution images using `pdf2image` + Poppler
+3. **OCR Extraction** — Runs Tesseract OCR to extract text from graph images (titles, statistics)
+4. **Stats Parsing** — Parses Inbound/Outbound Maximum values with automatic unit detection (G/M/k/bps)
+5. **OCR Correction** — Automatically detects and fixes common OCR decimal-drop errors (e.g. "2.93G" read as "293G") using the allocated bandwidth as a sanity ceiling
+6. **Graph-to-Row Mapping** — Matches each graph's client name to the correct spreadsheet row using configurable regex patterns + fuzzy token matching as fallback
+7. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet with traffic-light colour coding and cell borders, preserving all existing formulas. A post-save XML patch adds the `applyFill="1"` and `applyBorder="1"` attributes that openpyxl omits by default, ensuring fills and borders render correctly in Excel
+8. **Batch Processing** — Optionally process an entire directory of daily PDFs in one run (GUI Batch Mode tab or `--batch DIR` CLI flag); report dates are auto-detected from each PDF filename
+
+---
+
+## Sample Input (MRTG Graph PDF)
+
+Each page of the input PDF contains 2-3 MRTG/Cacti bandwidth graphs with Inbound/Outbound statistics:
+
+![Sample Input PDF](screenshots/sample_input_pdf.png)
+
+*Each graph shows traffic over 24 hours with Current, Average, and Maximum values for Inbound and Outbound.*
+
+
+---
+
+## Sample Output (Bandwidth Report XLSX)
+
+The generated Excel report contains Maximum Usage in Mbps for each client, organized by category:
+
+![Sample Output XLSX](screenshots/sample_output_xlsx.png)
+
+*Cells are colour-coded by utilisation vs allocated bandwidth:*
+
+| Colour | Meaning |
+|--------|---------|
+| Green | ≤ 70% of allocation — healthy |
+| Amber | 71–90% — getting close |
+| Orange | 91–100% — near limit |
+| Red | > 100% — exceeded allocation |
+| Blue | Value was auto-corrected by OCR decimal-drop fix — review advised |
+| Yellow (F col) | No graph matched for this client row |
+
+*All data cells (A–F) have thin borders for readability. Section headers (IIG Clients, ISP Clients, etc.) are styled dark green. Formulas for totals and summaries are preserved from the template.*
+
+---
+
+## Requirements
+
+| Component | Purpose |
+|-----------|---------|
+| Python 3.8+ | Runtime |
+| Tesseract OCR | Text recognition from graph images |
+| Poppler (pdftoppm) | PDF to image conversion |
+| tkinter | GUI toolkit (included with Python on macOS/Windows; separate package on some Linux distros) |
+| openpyxl | Excel file reading/writing |
+| pdf2image | PDF page rendering |
+| pytesseract | Python wrapper for Tesseract |
+| Pillow | Image processing |
+| playwright | Browser automation for daily pipeline (optional — only needed for `auto_report.py`) |
+| python-dotenv | Environment variable loading (optional — only needed for `auto_report.py`) |
+
+---
+
+## Automated Installation Scripts
+
+Copy and paste the script for your OS into a terminal. Each script installs **all** system and Python dependencies from scratch on a clean machine.
+
+### macOS
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== MRTG Bandwidth Report — macOS Installer ==="
+
+# Install Homebrew if not present
+if ! command -v brew &>/dev/null; then
+    echo "[1/4] Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Add brew to PATH for Apple Silicon and Intel
+    if [ -f /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -f /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+else
+    echo "[1/4] Homebrew already installed."
+fi
+
+# Install Python, Tesseract, Poppler
+echo "[2/4] Installing system packages (Python, Tesseract, Poppler)..."
+brew install python tesseract poppler
+
+# Install Python dependencies
+echo "[3/4] Installing Python packages..."
+python3 -m pip install --upgrade pip
+python3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
+
+# Install Playwright browser for automation
+echo "[4/5] Installing Playwright Chromium..."
+python3 -m playwright install chromium
+
+# Verify
+echo "[5/5] Verifying installation..."
+python3 --version
+tesseract --version | head -1
+pdftoppm -v 2>&1 | head -1
+python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All Python packages OK')"
+
+echo ""
+echo "=== Installation complete! ==="
+echo "Run:  python3 mrtg_bandwidth_report.py"
+echo "Auto: python3 auto_report.py  (after creating .env)"
+```
+
+### Linux (Ubuntu / Debian)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== MRTG Bandwidth Report — Ubuntu/Debian Installer ==="
+
+# Update package lists
+echo "[1/5] Updating package lists..."
+sudo apt update
+
+# Install Python, Tesseract, Poppler, tkinter
+echo "[2/5] Installing system packages..."
+sudo apt install -y python3 python3-pip python3-venv python3-tk \
+    tesseract-ocr poppler-utils
+
+# Install Python dependencies
+echo "[3/5] Installing Python packages..."
+python3 -m pip install --upgrade pip --break-system-packages 2>/dev/null \
+    || python3 -m pip install --upgrade pip
+python3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv --break-system-packages 2>/dev/null \
+    || python3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
+
+# Install Playwright browser for automation
+echo "[4/5] Installing Playwright Chromium..."
+python3 -m playwright install chromium
+
+# Verify
+echo "[5/5] Verifying installation..."
+python3 --version
+tesseract --version 2>&1 | head -1
+pdftoppm -v 2>&1 | head -1
+python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All Python packages OK')"
+
+echo ""
+echo "=== Installation complete! ==="
+echo "Run:  python3 mrtg_bandwidth_report.py"
+echo "Auto: python3 auto_report.py  (after creating .env)"
+```
+
+### Linux (Fedora / RHEL / CentOS)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== MRTG Bandwidth Report — Fedora/RHEL Installer ==="
+
+# Install Python, Tesseract, Poppler, tkinter
+echo "[1/4] Installing system packages..."
+sudo dnf install -y python3 python3-pip python3-tkinter \
+    tesseract poppler-utils
+
+# Install Python dependencies
+echo "[2/4] Installing Python packages..."
+python3 -m pip install --upgrade pip
+python3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
+
+# Install Playwright browser for automation
+echo "[3/4] Installing Playwright Chromium..."
+python3 -m playwright install chromium
+
+# Verify
+echo "[4/4] Verifying installation..."
+python3 --version
+tesseract --version 2>&1 | head -1
+pdftoppm -v 2>&1 | head -1
+python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All Python packages OK')"
+
+echo ""
+echo "=== Installation complete! ==="
+echo "Run:  python3 mrtg_bandwidth_report.py"
+echo "Auto: python3 auto_report.py  (after creating .env)"
+```
+
+### Linux (Arch / Manjaro)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== MRTG Bandwidth Report — Arch Linux Installer ==="
+
+# Install Python, Tesseract, Poppler, tk
+echo "[1/4] Installing system packages..."
+sudo pacman -Syu --noconfirm python python-pip tk tesseract poppler
+
+# Install Python dependencies
+echo "[2/4] Installing Python packages..."
+python -m pip install --upgrade pip --break-system-packages
+python -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv --break-system-packages
+
+# Install Playwright browser for automation
+echo "[3/4] Installing Playwright Chromium..."
+python -m playwright install chromium
+
+# Verify
+echo "[4/4] Verifying installation..."
+python --version
+tesseract --version 2>&1 | head -1
+pdftoppm -v 2>&1 | head -1
+python -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All Python packages OK')"
+
+echo ""
+echo "=== Installation complete! ==="
+echo "Run:  python mrtg_bandwidth_report.py"
+echo "Auto: python auto_report.py  (after creating .env)"
+```
+
+### Windows (PowerShell — recommended)
+
+Open **PowerShell as Administrator** and run:
+
+```powershell
+Write-Host "=== MRTG Bandwidth Report - Windows Installer ===" -ForegroundColor Cyan
+
+# Install winget packages (Python, Tesseract, Poppler)
+Write-Host "[1/4] Installing system packages via winget..." -ForegroundColor Yellow
+
+$packages = @(
+    @{ Id = "Python.Python.3.11";       Name = "Python 3.11" },
+    @{ Id = "UB-Mannheim.TesseractOCR"; Name = "Tesseract OCR" },
+    @{ Id = "oschwartz10612.Poppler";    Name = "Poppler" }
+)
+
+foreach ($pkg in $packages) {
+    $installed = winget list --id $pkg.Id 2>$null | Select-String $pkg.Id
+    if ($installed) {
+        Write-Host "  $($pkg.Name) already installed." -ForegroundColor Green
+    } else {
+        Write-Host "  Installing $($pkg.Name)..."
+        winget install --id $pkg.Id --accept-source-agreements --accept-package-agreements
+    }
+}
+
+# Refresh PATH so newly installed commands are available
+Write-Host "[2/4] Refreshing PATH..." -ForegroundColor Yellow
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + `
+            [System.Environment]::GetEnvironmentVariable("Path","User")
+
+# Install Python packages
+Write-Host "[3/4] Installing Python packages..." -ForegroundColor Yellow
+py -3 -m pip install --upgrade pip
+py -3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
+
+# Install Playwright browser for automation
+Write-Host "[4/5] Installing Playwright Chromium..." -ForegroundColor Yellow
+py -3 -m playwright install chromium
+
+# Verify
+Write-Host "[5/5] Verifying installation..." -ForegroundColor Yellow
+py -3 --version
+tesseract --version 2>$null | Select-Object -First 1
+pdftoppm -v 2>&1 | Select-Object -First 1
+py -3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All Python packages OK')"
+
+Write-Host ""
+Write-Host "=== Installation complete! ===" -ForegroundColor Cyan
+Write-Host "Run:  py -3 mrtg_bandwidth_report.py"
+Write-Host "Auto: py -3 auto_report.py  (after creating .env)"
+Write-Host "  or: double-click run.bat"
+```
+
+### Windows (Chocolatey — alternative)
+
+Open **PowerShell as Administrator** and run:
+
+```powershell
+# Install Chocolatey if not present
+if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+    Set-ExecutionPolicy Bypass -Scope Process -Force
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+}
+
+# Install system packages
+choco install python3 tesseract poppler -y
+
+# Refresh PATH
+refreshenv
+
+# Install Python packages
+py -3 -m pip install --upgrade pip
+py -3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
+py -3 -m playwright install chromium
+
+Write-Host "Installation complete! Run: py -3 mrtg_bandwidth_report.py"
+```
+
+---
+
+## Quick Install (one-liner)
+
+If you already have Python, Git, and a package manager installed:
+
+**macOS:**
+```bash
+git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git && cd BSCPLC-mrtg-bandwidth-report && brew install tesseract poppler && pip3 install openpyxl pdf2image pytesseract Pillow playwright python-dotenv && python3 -m playwright install chromium && python3 mrtg_bandwidth_report.py
+```
+
+**Ubuntu / Debian:**
+```bash
+git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git && cd BSCPLC-mrtg-bandwidth-report && sudo apt install -y tesseract-ocr poppler-utils python3-tk && pip3 install openpyxl pdf2image pytesseract Pillow playwright python-dotenv && python3 -m playwright install chromium && python3 mrtg_bandwidth_report.py
+```
+
+**Windows (winget — run in PowerShell):**
+```powershell
+git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git; cd BSCPLC-mrtg-bandwidth-report; winget install UB-Mannheim.TesseractOCR oschwartz10612.Poppler; pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv; python -m playwright install chromium; py -3 mrtg_bandwidth_report.py
+```
+
+---
+
+## Usage
+
+### GUI Mode (default)
+
+```bash
+python mrtg_bandwidth_report.py
+```
+
+On Windows you can also double-click **`run.bat`**, which auto-detects Tesseract and Poppler from common install paths (winget, Chocolatey, manual).
+
+Opens a graphical interface with two tabs:
+
+**Single File tab**
+- Browse and select the input PDF and template XLSX
+- Set the report date
+- Adjust OCR DPI (higher = better accuracy, slower processing)
+- View real-time processing logs with matched/unmatched graphs
+- Inspect the graph-to-row mapping table
+- **Copy Unmatched Entries** — after each run, click this button to copy a list of client rows that had no matching graph in the PDF (tab-separated, paste directly into Excel or Notepad)
+
+**Batch Mode tab**
+- Select a directory containing multiple daily PDF files
+- Optionally set a separate output directory for the generated XLSX files
+- Click **Run Batch** — dates are auto-detected from each PDF filename; a report is generated for every PDF found
+
+**Shared options** (apply to both tabs):
+- **Warn duplicates** checkbox — logs a warning whenever two graphs match the same row, showing both values before the higher one wins
+- All settings (template path, DPI, warn-duplicates, batch directories) are saved automatically to `~/.mrtg_report_config.json` and restored on next launch
+
+### CLI Mode
+
+**Single file:**
+```bash
+python mrtg_bandwidth_report.py --cli \
+    --pdf input26.3.26.pdf \
+    --template "Bandwidth Report (MAX) For 25 march 2026.xlsx" \
+    --date "26 March 2026" \
+    --output "Bandwidth Report (MAX) For 26 March 2026.xlsx"
+```
+
+**Batch (whole directory of PDFs):**
+```bash
+python mrtg_bandwidth_report.py --cli \
+    --batch /path/to/pdfs/ \
+    --template "Bandwidth Report (MAX) For 25 march 2026.xlsx" \
+    --output-dir /path/to/reports/
+```
+
+**CLI Options:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--pdf` | Input PDF with MRTG graphs (single-file mode) | *required unless `--batch`* |
+| `--batch DIR` | Process all PDFs in a directory; dates auto-detected from filenames | - |
+| `--template` | Template xlsx file (previous day) | *required* |
+| `--date` | Report date string (single-file; auto-detected in batch) | Today's date |
+| `--output` | Output xlsx path (single-file) | Auto-generated |
+| `--output-dir DIR` | Output directory for batch-generated reports | Same dir as each PDF |
+| `--dpi` | PDF render DPI | 250 |
+| `--warn-duplicates` | Log a warning when two graphs map to the same row | off |
+| `--debug-json` | Save extraction debug data to JSON (single-file) | - |
+| `--debug-full` | Include raw per-page OCR text in debug JSON | off |
+
+---
+
+## Customizing the Graph Mapping
+
+The mapping between MRTG graph titles and spreadsheet rows is configured in the `GRAPH_TO_ROW_MAP` list at the top of the script. Each entry is a tuple:
+
+```python
+(r"regex_pattern", "E4", "Description")
+```
+
+- **regex_pattern** — Case-insensitive regex matched against the client name extracted from the graph title
+- **E4** — The Excel cell reference (always column E + row number)
+- **Description** — Human-readable name for logging
+
+**Example:** To add a new client "NewTelco" at row 29:
+```python
+(r"NewTelco|NEW.?TELCO", "E29", "NewTelco COX"),
+```
+
+The graph title format from MRTG is typically:
+```
+{prefix}-{router} - {CLIENT-NAME} - {interface}
+```
+The script extracts the CLIENT-NAME portion and matches it against your patterns.
+
+---
+
+## Spreadsheet Structure
+
+The template xlsx follows this layout:
+
+| Section | Rows | Description |
+|---------|------|-------------|
+| IIG Clients | 4-28 | International Internet Gateway clients |
+| ISP Clients | 31-51 | Internet Service Provider clients |
+| Cache | 54-55 | Cache bandwidth (CDN/Cloudflare) |
+| LD Clients | 58-67 | Limited Destination bandwidth clients |
+| Summary | 70-74 | Auto-calculated totals (formulas preserved) |
+
+**Key columns:** A=Sl.No, B=Client, C=Location, D=Allocated BW, E=Max Usage (Mbps), F=Remarks
+
+---
+
+## Accuracy Notes
+
+This tool uses OCR to read text from graph images, which has inherent limitations:
+
+- **Typical accuracy: ~80-90%** of values extracted correctly without correction; higher with auto-correction
+- Unit letters (M/G/k) may be missed or misread by OCR — full unit strings (`Mbps`, `Gbps`, `kbps`) are also handled automatically
+- Common OCR character substitutions (`@` → `0`, `[` → `I`, `|` → `l`, `]` → `)`) are automatically corrected before pattern matching
+- **OCR-tolerant direction matching** — garbled direction keywords (`lnbound`, `0utbound`, `1nbound`) are detected and matched correctly
+- **Decimal-drop correction:** Values wildly exceeding allocated bandwidth (>10x) are automatically corrected by dividing until plausible (e.g. 293,000 Mbps → 14,560 Mbps); corrected cells are highlighted blue. A false-positive safeguard prevents over-correction: if only one traffic direction triggers the correction and the corrected value falls below the other direction's raw value, the correction is reverted (e.g. a legitimate 167.53 Mbps burst on a small-allocated link is preserved instead of being divided to 16.75 Mbps)
+- **Duplicate row handling:** When two graphs map to the same spreadsheet row, the higher `MAX(in, out)` value wins. Enable **Warn duplicates** (GUI checkbox or `--warn-duplicates` CLI flag) to log each overwrite with both values and their source pages for review
+- **Cache cell accumulation:** Multiple cache graphs (e.g. Exabyte TEJ + DC + EDGENEXT) are summed rather than taking the maximum, for accurate totals
+- **Expanded interface detection:** Recognises `GigabitEthernet`, `Gi0/0`, `Te0/0`, `FortyGigE`, `TwentyFiveGig` in addition to `Bundle-Ether`, `TenGigE`, `HundredGigE`
+- **Fuzzy fallback matching:** 65-entry token map covers all client rows as a last resort when regex patterns fail
+- Some graph titles may not match patterns — unmatched rows are highlighted yellow in the F column as a manual review flag; use the **Copy Unmatched Entries** button to export the list
+- Graphs marked "Could not open!" in the PDF will have no data (this is a Cacti error, not a tool issue)
+
+**Always manually verify the output** against the source PDF before distributing the report.
+
+---
+
+## Automated Daily Report Pipeline
+
+The `auto_report.py` script fully automates the daily bandwidth report workflow — from fetching the email to delivering the final spreadsheet.
+
+### How It Works
+
+```
+12:01 AM  →  MRTG report email arrives in Outlook
+12:05 AM  →  Windows Task Scheduler triggers auto_report.py
+              1. Playwright Chromium opens Outlook web, logs in
+              2. Searches for "BSCPLC MRTG Report" email
+              3. Opens the email and saves it as PDF
+              4. Runs the OCR report generator on the PDF
+              5. Emails the .xlsx report to the configured recipient
+```
+
+### Automation Setup
+
+**1. Install automation dependencies:**
+
+```bash
+pip install playwright python-dotenv
+playwright install chromium
+```
+
+**2. Create a `.env` file** in the project root (never committed to git):
+
+```
+OUTLOOK_EMAIL=your_email@example.com
+OUTLOOK_PASSWORD=your_password
+REPORT_RECIPIENT=recipient@example.com
+TEMPLATE_PATH=D:\path\to\template.xlsx
+```
+
+**3. Test it manually:**
+
+```bash
+python auto_report.py
+```
+
+**4. Schedule it (Windows):**
+
+Run `setup_scheduler.bat` as Administrator, or manually:
+
+```powershell
+schtasks /create /tn "MRTG_Auto_Report" /tr "python E:\app\Daily_BW_report\auto_report.py" /sc daily /st 00:05 /f
+```
+
+### Automation Output
+
+- PDFs saved to `pdfs/` directory
+- Reports saved to `reports/` directory
+- Report emailed to the configured recipient via Outlook SMTP
+
+---
+
+## Project Structure
+
+```
+mrtg-bandwidth-report/
+├── mrtg_bandwidth_report.py    # Main script (GUI + CLI)
+├── auto_report.py              # Automated daily pipeline (email → PDF → OCR → report → email)
+├── run.bat                     # Windows launcher (auto-detects Tesseract + Poppler)
+├── setup_scheduler.bat         # One-click Windows Task Scheduler setup
+├── requirements.txt            # Python dependencies
+├── tests/
+│   ├── __init__.py
+│   ├── test_fill_logic.py          # Unit tests for traffic-light fill logic
+│   └── test_extraction_fixes.py    # Regression tests for extraction pipeline (49 tests)
+├── README.md                   # This file
+├── screenshots/                # Documentation images
+│   ├── gui_screenshot.png
+│   ├── pipeline.png
+│   ├── sample_input_pdf.png
+│   ├── sample_input_page2.png
+│   └── sample_output_xlsx.png
+├── .env                        # Credentials (gitignored — create manually)
+├── .gitignore
+└── LICENSE
+```
+
+---
+
+## License
+
+MIT License — free to use, modify, and distribute.

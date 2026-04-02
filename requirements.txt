@@ -1,0 +1,6 @@
+openpyxl
+pdf2image
+pytesseract
+Pillow
+camoufox[geoip]
+python-dotenv
