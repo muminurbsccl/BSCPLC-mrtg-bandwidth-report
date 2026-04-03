@@ -82,9 +82,20 @@ set -euo pipefail
 
 echo "=== MRTG Bandwidth Report — macOS Installer ==="
 
+# Clone repository
+INSTALL_DIR="$HOME/BSCPLC-mrtg-bandwidth-report"
+echo "[1/6] Cloning repository..."
+if [ -d "$INSTALL_DIR" ]; then
+    echo "  Directory already exists, pulling latest..."
+    cd "$INSTALL_DIR" && git pull
+else
+    git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+fi
+
 # Install Homebrew if not present
 if ! command -v brew &>/dev/null; then
-    echo "[1/4] Installing Homebrew..."
+    echo "[2/6] Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     # Add brew to PATH for Apple Silicon and Intel
     if [ -f /opt/homebrew/bin/brew ]; then
@@ -93,24 +104,24 @@ if ! command -v brew &>/dev/null; then
         eval "$(/usr/local/bin/brew shellenv)"
     fi
 else
-    echo "[1/4] Homebrew already installed."
+    echo "[2/6] Homebrew already installed."
 fi
 
 # Install Python, Tesseract, Poppler
-echo "[2/4] Installing system packages (Python, Tesseract, Poppler)..."
+echo "[3/6] Installing system packages (Python, Tesseract, Poppler)..."
 brew install python tesseract poppler
 
 # Install Python dependencies
-echo "[3/4] Installing Python packages..."
+echo "[4/6] Installing Python packages..."
 python3 -m pip install --upgrade pip
 python3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
 
 # Install Playwright browser for automation
-echo "[4/5] Installing Playwright Chromium..."
+echo "[5/6] Installing Playwright Chromium..."
 python3 -m playwright install chromium
 
 # Verify
-echo "[5/5] Verifying installation..."
+echo "[6/6] Verifying installation..."
 python3 --version
 tesseract --version | head -1
 pdftoppm -v 2>&1 | head -1
@@ -118,9 +129,10 @@ python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All
 
 echo ""
 echo "=== Installation complete! ==="
+echo "Installed to: $INSTALL_DIR"
 echo ""
 echo "--- GUI / CLI Mode ---"
-echo "Run:  python3 mrtg_bandwidth_report.py"
+echo "Run:  cd $INSTALL_DIR && python3 mrtg_bandwidth_report.py"
 echo ""
 echo "--- Full Automation Setup ---"
 echo "1. Create a .env file in the project root:"
@@ -132,7 +144,7 @@ echo ""
 echo "2. Test manually:  python3 auto_report.py"
 echo ""
 echo "3. Schedule daily (cron - runs at 12:05 AM):"
-echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $(pwd) && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
+echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $INSTALL_DIR && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
 echo ""
 echo "The pipeline: Outlook login → PDF download → OCR report → email delivery"
 ```
@@ -145,38 +157,51 @@ set -euo pipefail
 
 echo "=== MRTG Bandwidth Report — Ubuntu/Debian Installer ==="
 
+# Clone repository
+INSTALL_DIR="$HOME/BSCPLC-mrtg-bandwidth-report"
+echo "[1/7] Cloning repository..."
+if [ -d "$INSTALL_DIR" ]; then
+    echo "  Directory already exists, pulling latest..."
+    cd "$INSTALL_DIR" && git pull
+else
+    git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+fi
+
 # Update package lists
-echo "[1/5] Updating package lists..."
+echo "[2/7] Updating package lists..."
 sudo apt update
 
 # Install Python, Tesseract, Poppler, tkinter
-echo "[2/5] Installing system packages..."
+echo "[3/7] Installing system packages..."
 sudo apt install -y python3 python3-pip python3-venv python3-tk \
     tesseract-ocr poppler-utils
 
 # Install Python dependencies
-echo "[3/5] Installing Python packages..."
+echo "[4/7] Installing Python packages..."
 python3 -m pip install --upgrade pip --break-system-packages 2>/dev/null \
     || python3 -m pip install --upgrade pip
 python3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv --break-system-packages 2>/dev/null \
     || python3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
 
 # Install Playwright browser for automation
-echo "[4/5] Installing Playwright Chromium..."
+echo "[5/7] Installing Playwright Chromium..."
 python3 -m playwright install chromium
 
 # Verify
-echo "[5/5] Verifying installation..."
+echo "[6/7] Verifying installation..."
 python3 --version
 tesseract --version 2>&1 | head -1
 pdftoppm -v 2>&1 | head -1
 python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All Python packages OK')"
 
 echo ""
+echo "[7/7] Setup complete!"
 echo "=== Installation complete! ==="
+echo "Installed to: $INSTALL_DIR"
 echo ""
 echo "--- GUI / CLI Mode ---"
-echo "Run:  python3 mrtg_bandwidth_report.py"
+echo "Run:  cd $INSTALL_DIR && python3 mrtg_bandwidth_report.py"
 echo ""
 echo "--- Full Automation Setup ---"
 echo "1. Create a .env file in the project root:"
@@ -188,7 +213,7 @@ echo ""
 echo "2. Test manually:  python3 auto_report.py"
 echo ""
 echo "3. Schedule daily (cron - runs at 12:05 AM):"
-echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $(pwd) && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
+echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $INSTALL_DIR && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
 echo ""
 echo "The pipeline: Outlook login → PDF download → OCR report → email delivery"
 ```
@@ -201,32 +226,45 @@ set -euo pipefail
 
 echo "=== MRTG Bandwidth Report — Fedora/RHEL Installer ==="
 
+# Clone repository
+INSTALL_DIR="$HOME/BSCPLC-mrtg-bandwidth-report"
+echo "[1/6] Cloning repository..."
+if [ -d "$INSTALL_DIR" ]; then
+    echo "  Directory already exists, pulling latest..."
+    cd "$INSTALL_DIR" && git pull
+else
+    git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+fi
+
 # Install Python, Tesseract, Poppler, tkinter
-echo "[1/4] Installing system packages..."
+echo "[2/6] Installing system packages..."
 sudo dnf install -y python3 python3-pip python3-tkinter \
     tesseract poppler-utils
 
 # Install Python dependencies
-echo "[2/4] Installing Python packages..."
+echo "[3/6] Installing Python packages..."
 python3 -m pip install --upgrade pip
 python3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
 
 # Install Playwright browser for automation
-echo "[3/4] Installing Playwright Chromium..."
+echo "[4/6] Installing Playwright Chromium..."
 python3 -m playwright install chromium
 
 # Verify
-echo "[4/4] Verifying installation..."
+echo "[5/6] Verifying installation..."
 python3 --version
 tesseract --version 2>&1 | head -1
 pdftoppm -v 2>&1 | head -1
 python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All Python packages OK')"
 
 echo ""
+echo "[6/6] Setup complete!"
 echo "=== Installation complete! ==="
+echo "Installed to: $INSTALL_DIR"
 echo ""
 echo "--- GUI / CLI Mode ---"
-echo "Run:  python3 mrtg_bandwidth_report.py"
+echo "Run:  cd $INSTALL_DIR && python3 mrtg_bandwidth_report.py"
 echo ""
 echo "--- Full Automation Setup ---"
 echo "1. Create a .env file in the project root:"
@@ -238,7 +276,7 @@ echo ""
 echo "2. Test manually:  python3 auto_report.py"
 echo ""
 echo "3. Schedule daily (cron - runs at 12:05 AM):"
-echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $(pwd) && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
+echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $INSTALL_DIR && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
 echo ""
 echo "The pipeline: Outlook login → PDF download → OCR report → email delivery"
 ```
@@ -251,31 +289,44 @@ set -euo pipefail
 
 echo "=== MRTG Bandwidth Report — Arch Linux Installer ==="
 
+# Clone repository
+INSTALL_DIR="$HOME/BSCPLC-mrtg-bandwidth-report"
+echo "[1/6] Cloning repository..."
+if [ -d "$INSTALL_DIR" ]; then
+    echo "  Directory already exists, pulling latest..."
+    cd "$INSTALL_DIR" && git pull
+else
+    git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+fi
+
 # Install Python, Tesseract, Poppler, tk
-echo "[1/4] Installing system packages..."
+echo "[2/6] Installing system packages..."
 sudo pacman -Syu --noconfirm python python-pip tk tesseract poppler
 
 # Install Python dependencies
-echo "[2/4] Installing Python packages..."
+echo "[3/6] Installing Python packages..."
 python -m pip install --upgrade pip --break-system-packages
 python -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv --break-system-packages
 
 # Install Playwright browser for automation
-echo "[3/4] Installing Playwright Chromium..."
+echo "[4/6] Installing Playwright Chromium..."
 python -m playwright install chromium
 
 # Verify
-echo "[4/4] Verifying installation..."
+echo "[5/6] Verifying installation..."
 python --version
 tesseract --version 2>&1 | head -1
 pdftoppm -v 2>&1 | head -1
 python -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All Python packages OK')"
 
 echo ""
+echo "[6/6] Setup complete!"
 echo "=== Installation complete! ==="
+echo "Installed to: $INSTALL_DIR"
 echo ""
 echo "--- GUI / CLI Mode ---"
-echo "Run:  python mrtg_bandwidth_report.py"
+echo "Run:  cd $INSTALL_DIR && python mrtg_bandwidth_report.py"
 echo ""
 echo "--- Full Automation Setup ---"
 echo "1. Create a .env file in the project root:"
@@ -287,7 +338,7 @@ echo ""
 echo "2. Test manually:  python auto_report.py"
 echo ""
 echo "3. Schedule daily (cron - runs at 12:05 AM):"
-echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $(pwd) && python auto_report.py >> auto_report.log 2>&1\") | crontab -"
+echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $INSTALL_DIR && python auto_report.py >> auto_report.log 2>&1\") | crontab -"
 echo ""
 echo "The pipeline: Outlook login → PDF download → OCR report → email delivery"
 ```
@@ -299,8 +350,20 @@ Open **PowerShell as Administrator** and run:
 ```powershell
 Write-Host "=== MRTG Bandwidth Report - Windows Installer ===" -ForegroundColor Cyan
 
+# Clone repository
+$InstallDir = "E:\app\Daily_BW_report"
+Write-Host "[1/6] Cloning repository..." -ForegroundColor Yellow
+if (Test-Path $InstallDir) {
+    Write-Host "  Directory already exists, pulling latest..."
+    Set-Location $InstallDir; git pull
+} else {
+    New-Item -ItemType Directory -Path (Split-Path $InstallDir) -Force | Out-Null
+    git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git $InstallDir
+    Set-Location $InstallDir
+}
+
 # Install winget packages (Python, Tesseract, Poppler)
-Write-Host "[1/4] Installing system packages via winget..." -ForegroundColor Yellow
+Write-Host "[2/6] Installing system packages via winget..." -ForegroundColor Yellow
 
 $packages = @(
     @{ Id = "Python.Python.3.11";       Name = "Python 3.11" },
@@ -319,21 +382,21 @@ foreach ($pkg in $packages) {
 }
 
 # Refresh PATH so newly installed commands are available
-Write-Host "[2/4] Refreshing PATH..." -ForegroundColor Yellow
+Write-Host "[3/6] Refreshing PATH..." -ForegroundColor Yellow
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + `
             [System.Environment]::GetEnvironmentVariable("Path","User")
 
 # Install Python packages
-Write-Host "[3/4] Installing Python packages..." -ForegroundColor Yellow
+Write-Host "[4/6] Installing Python packages..." -ForegroundColor Yellow
 py -3 -m pip install --upgrade pip
 py -3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
 
 # Install Playwright browser for automation
-Write-Host "[4/5] Installing Playwright Chromium..." -ForegroundColor Yellow
+Write-Host "[5/6] Installing Playwright Chromium..." -ForegroundColor Yellow
 py -3 -m playwright install chromium
 
 # Verify
-Write-Host "[5/5] Verifying installation..." -ForegroundColor Yellow
+Write-Host "[6/6] Verifying installation..." -ForegroundColor Yellow
 py -3 --version
 tesseract --version 2>$null | Select-Object -First 1
 pdftoppm -v 2>&1 | Select-Object -First 1
@@ -341,9 +404,10 @@ py -3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All P
 
 Write-Host ""
 Write-Host "=== Installation complete! ===" -ForegroundColor Cyan
+Write-Host "Installed to: $InstallDir"
 Write-Host ""
 Write-Host "--- GUI / CLI Mode ---" -ForegroundColor Green
-Write-Host "Run:  py -3 mrtg_bandwidth_report.py"
+Write-Host "Run:  cd $InstallDir; py -3 mrtg_bandwidth_report.py"
 Write-Host "  or: double-click run.bat"
 Write-Host ""
 Write-Host "--- Full Automation Setup ---" -ForegroundColor Green
@@ -356,7 +420,7 @@ Write-Host ""
 Write-Host "2. Test manually:  py -3 auto_report.py"
 Write-Host ""
 Write-Host "3. Schedule daily (run setup_scheduler.bat as Admin, or):"
-Write-Host "   schtasks /create /tn `"MRTG_Auto_Report`" /tr `"py -3 $PWD\auto_report.py`" /sc daily /st 00:05 /f"
+Write-Host "   schtasks /create /tn `"MRTG_Auto_Report`" /tr `"py -3 $InstallDir\auto_report.py`" /sc daily /st 00:05 /f"
 Write-Host ""
 Write-Host "Pipeline: Outlook login -> PDF download -> OCR report -> email delivery"
 ```
@@ -366,6 +430,16 @@ Write-Host "Pipeline: Outlook login -> PDF download -> OCR report -> email deliv
 Open **PowerShell as Administrator** and run:
 
 ```powershell
+# Clone repository
+$InstallDir = "E:\app\Daily_BW_report"
+if (Test-Path $InstallDir) {
+    Set-Location $InstallDir; git pull
+} else {
+    New-Item -ItemType Directory -Path (Split-Path $InstallDir) -Force | Out-Null
+    git clone https://github.com/muminurbsccl/BSCPLC-mrtg-bandwidth-report.git $InstallDir
+    Set-Location $InstallDir
+}
+
 # Install Chocolatey if not present
 if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
     Set-ExecutionPolicy Bypass -Scope Process -Force
