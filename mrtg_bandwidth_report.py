@@ -83,7 +83,7 @@ GRAPH_TO_ROW_MAP = [
     (r"Equitel|EQUITEL", "E5", "Equitel DHK"),
     (r"Skytel.*DC|Skytel.*PRIMARY|Skytel.*IIG.*PRI", "E6", "Skytel Primary"),
     (r"Skytel.*TEJ|Skytel.*SECONDARY|Skytel.*IIG.*SEC", "E7", "Skytel Secondary"),
-    (r"PEEREX.*TEJ\b|PEEREX-TEJ", "E8", "Peerex DHK"),
+    (r"PEEREX.*TEJ\b|PEEREX-TEJ|PEEREX.DC", "E8", "Peerex DHK"),
     (r"PEEREX.*9\.?5G|PEEREX-9", "E9", "Peerex Cox-9500"),
     (r"PEEREX.*COX.*[0@][2z]|PEEREX-COX-[0@][2z]", "E10", "Peerex Cox-3432"),
     (r"F.H.*KKT.*BE|FAH.*KKT|F@H.*KKT", "E11", "F@Home KKT"),
@@ -98,7 +98,7 @@ GRAPH_TO_ROW_MAP = [
     (r"INTRAGLOBE.*IPT|Intraglobe.*IPT", "E20", "Intraglobe KKT IIG"),
     (r"GMax-IPT|GMAX.*IPT|GMax.*IPT", "E21", "Green Max COX IIG"),
     (r"BD.?LINK.*(?:IIG|DC)|BDLINK.*DC", "E22", "BD-LINK DHK"),
-    (r"ADNGateway.*SEC|ADN.*Gateway.*SEC|ADN.*GW.*SEC|ADN.*TEJ", "E24", "ADN-GW DHK-Secondary"),
+    (r"ADNGateway.*SEC|ADN.*Gateway.*SEC|ADN.*GW.*SEC", "E24", "ADN-GW DHK-Secondary"),
     (r"ADNGateway|ADN.*Gateway", "E23", "ADN-GW DHK-Primary"),
     (r"REGO.COX.IIG|REGO_COX_IIG|REGO.*COX.*IIG", "E25", "Rego COX IIG"),
     (r"REGO-IIG|REGO.*IIG(?!.*COX)", "E26", "Rego KKT IIG"),
@@ -107,7 +107,7 @@ GRAPH_TO_ROW_MAP = [
 
     # ---- ISP Clients (rows 31-51) ----
     # NOTE: E32 (SEC) must come before E31 (Primary) — first match wins
-    (r"ADN.*DHK.*SEC|ADN.*DhakaColo.*SEC", "E32", "ADN DHK-Secondary"),
+    (r"ADN.*DHK.*SEC|ADN.*DhakaColo.*SEC|ADN.TEJ", "E32", "ADN DHK-Secondary"),
     (r"ADN.*DHK.*ISP|ADN-DhakaColo|ADN.*DhakaColo|ADN.*DC(?!.*LD)", "E31", "ADN DHK-Primary"),
     (r"TELET.LK.*MOG|Teletalk.*PRI.*DHK|TELETALK.*PRI.*DHK|Teletalk.*MOG", "E33", "Teletalk DHK-Primary"),
     (r"Telet.lk.*CTG.*Sec|TELET.LK.*CTG.*Sec|Teltatalk.*CTG.*Sec", "E35", "Teletalk CTG-Secondary"),
@@ -116,14 +116,14 @@ GRAPH_TO_ROW_MAP = [
     (r"COL.CTG.SEC|COL.*CTG.*SEC|COL.CTG.Sec", "E37", "COL CTG-Secondary"),
     (r"COXLINKT|COX.?LINK.*COX", "E38", "COX-Link COX"),
     (r"SSOnline.*Cloud(?!flare)|SS.?Online.*Cloud(?!flare)|SSOnline.*DC|SS.?Online.*DC", "E39", "SS Online DHK-Primary"),
-    (r"BDREN.*PRI|BDREN.*DHK.*03.*TO.*CGS|BDREN-DHK.*CGS", "E41", "BDREN DHK-Primary"),
+    (r"BDREN.*PRI", "E41", "BDREN DHK-Primary"),
     (r"BDREN.*SEC(?!.*Equinix)", "E42", "BDREN DHK-Secondary"),
     (r"BDCCL|BD.?CCL", "E43", "BDCCL DHK"),
     (r"Link3.*Dhaka.*Colo|LINK3.*DC|Link3.*DC", "E44", "Link3 DHK-Primary-DhakColo"),
     (r"Link3.*Tej|LINK3.*TEJ", "E45", "Link3 DHK-Secondary-Tejgaon"),
     (r"Dhaka.?Link.*Pri|DHAKA.?LINK.*PRI", "E46", "Dhaka-Link DHK-Primary"),
     (r"Dhaka.?Link.*Sec|DHAKA.?LINK.*SEC", "E47", "Dhaka-Link DHK-Secondary"),
-    (r"BDREN.*Equinix|BDREN.*CC.*Equinix", "E48", "BDREN DHK (Equinix)"),
+    (r"BDREN.*CGS|BDREN.*VPN.610|BDREN.*Equinix|BDREN.*CC.*Equinix", "E48", "BDREN DHK (CGS/Equinix)"),
     (r"Race.?Online|RACE.?ONLINE", "E49", "Race Online Ltd"),
     (r"Telnet.*ICT|TELNET.*ICT|Telnet.*DC|Telnet-DC", "E50", "Telnet Dhk-Colo"),
     # ---- Cache (rows 54-55) ----
@@ -381,6 +381,7 @@ _FUZZY_TOKEN_MAP = [
     ({"SKYTEL", "PRI"},            "E6",  "Skytel Primary (fuzzy)"),
     ({"SKYTEL", "SEC"},            "E7",  "Skytel Secondary (fuzzy)"),
     ({"PEEREX", "TEJ"},            "E8",  "Peerex DHK (fuzzy)"),
+    ({"PEEREX", "DC"},             "E8",  "Peerex DHK DC (fuzzy)"),
     ({"PEEREX", "9500"},           "E9",  "Peerex Cox-9500 (fuzzy)"),
     ({"PEEREX", "COX", "02"},      "E10", "Peerex Cox-3432 (fuzzy)"),
     ({"PEEREX", "COX", "0"},       "E10", "Peerex Cox-3432 (fuzzy-@)"),
@@ -399,7 +400,7 @@ _FUZZY_TOKEN_MAP = [
     ({"GMAX", "IPT"},              "E21", "Green Max COX IIG (fuzzy)"),
     ({"BDLINK"},                    "E22", "BD-LINK DHK (fuzzy)"),
     ({"ADN", "GATEWAY", "SEC"},    "E24", "ADN-GW DHK-Secondary (fuzzy)"),
-    ({"ADN", "TEJ"},               "E24", "ADN-GW DHK-Secondary (fuzzy)"),
+    ({"ADN", "TEJ"},               "E32", "ADN DHK-Secondary TEJ (fuzzy)"),
     ({"ADN", "GATEWAY"},           "E23", "ADN-GW DHK-Primary (fuzzy)"),
     ({"REGO", "COX", "IIG"},       "E25", "Rego COX IIG (fuzzy)"),
     ({"REGO", "IIG"},              "E26", "Rego KKT IIG (fuzzy)"),
@@ -422,6 +423,8 @@ _FUZZY_TOKEN_MAP = [
     ({"LINK3", "TEJ"},             "E45", "Link3 DHK-Secondary (fuzzy)"),
     ({"DHAKALINK", "PRI"},         "E46", "Dhaka-Link Primary (fuzzy)"),
     ({"DHAKALINK", "SEC"},         "E47", "Dhaka-Link Secondary (fuzzy)"),
+    ({"BDREN", "CGS"},             "E48", "BDREN DHK CGS (fuzzy)"),
+    ({"BDREN", "DHKCOLO", "VPN"},  "E48", "BDREN DHK VPN (fuzzy)"),
     ({"BDREN", "EQUINIX"},         "E48", "BDREN DHK Equinix (fuzzy)"),
     ({"RACEONLINE"},                "E49", "Race Online Ltd (fuzzy)"),
     ({"TELNET"},                    "E50", "Telnet Dhk-Colo (fuzzy)"),
@@ -940,16 +943,25 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
         except Exception as e:
             log.error(f"  Failed to write {row_ref}: {e}")
 
-    # --- Highlight F cell yellow for rows that were NOT filled ---
+    # --- Highlight F cell yellow for rows that were NOT filled,
+    #     and CLEAR yellow for rows that WERE filled (template may have stale yellow) ---
+    _NO_FILL = PatternFill(fill_type=None)
     for row_ref in EXPECTED_E_ROWS:
-        if row_ref not in filled_rows:
-            try:
-                row_num = int(re.search(r"\d+", row_ref).group())
-                f_cell = ws[f"F{row_num}"]
+        try:
+            row_num = int(re.search(r"\d+", row_ref).group())
+            f_cell = ws[f"F{row_num}"]
+            if row_ref not in filled_rows:
                 f_cell.fill = _FILL_YELLOW
                 log.info(f"  F{row_num} highlighted yellow (no data for {row_ref})")
-            except Exception:
-                pass
+            else:
+                # Clear any stale yellow from template/previous run
+                if f_cell.fill and f_cell.fill.start_color and \
+                   hasattr(f_cell.fill.start_color, 'rgb') and \
+                   f_cell.fill.start_color.rgb and \
+                   "FFFF00" in str(f_cell.fill.start_color.rgb):
+                    f_cell.fill = _NO_FILL
+        except Exception:
+            pass
 
     # --- Section header rows: dark green fill + white bold text ---
     for row_num in SECTION_HEADER_ROWS:
