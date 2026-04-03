@@ -623,13 +623,17 @@ The `auto_report.py` script fully automates the daily bandwidth report workflow 
 ### How It Works
 
 ```
-12:01 AM  →  MRTG report email arrives in Outlook
-12:05 AM  →  Windows Task Scheduler triggers auto_report.py
-              1. Playwright Chromium opens Outlook web, logs in
-              2. Searches for "BSCPLC MRTG Report" email
-              3. Opens the email and saves it as PDF
-              4. Runs the OCR report generator on the PDF
-              5. Emails the .xlsx report to the configured recipient
+12:01 AM  →  MRTG report email arrives in Outlook (covers previous day's graphs)
+12:05 AM  →  Task Scheduler / cron triggers auto_report.py
+              1. Playwright Chromium opens Outlook web
+              2. Logs in (or skips login if session cookies are still valid)
+              3. Searches for "BSCPLC MRTG Report" email
+              4. Scrolls email body to load all graph images, saves as PDF
+              5. Runs the OCR report generator on the PDF
+              6. Emails the .xlsx report to the configured recipient
+              
+              Report date = yesterday (the email covers the previous day)
+              Session cookies are saved so login is only needed on first run
 ```
 
 ### Automation Setup
@@ -661,7 +665,7 @@ TEMPLATE_PATH=D:\path\to\template.xlsx
 python auto_report.py
 ```
 
-A Chromium browser window will open, log into Outlook, download the MRTG report email as PDF, run the OCR pipeline, and email the resulting `.xlsx` to the recipient.
+A Chromium browser window will open, log into Outlook (credentials are entered automatically from `.env`), download the MRTG report email as PDF, run the OCR pipeline, and email the resulting `.xlsx` to the recipient. The report uses yesterday's date since the MRTG graphs cover the previous day. On subsequent runs, saved session cookies skip the login step.
 
 **3. Schedule daily execution:**
 
@@ -677,9 +681,10 @@ schtasks /create /tn "MRTG_Auto_Report" /tr "py -3 C:\path\to\auto_report.py" /s
 
 ### Automation Output
 
-- PDFs saved to `pdfs/` directory (auto-created)
-- Reports saved to `reports/` directory (auto-created)
+- PDFs saved to `pdfs/MRTG_Report_YYYY-MM-DD.pdf` (yesterday's date, auto-created)
+- Reports saved to `reports/Bandwidth Report (MAX) For DD Month YYYY.xlsx` (yesterday's date)
 - Report emailed to `REPORT_RECIPIENT` via Outlook SMTP (`smtp.office365.com:587`)
+- Session cookies saved to `.browser_data/` for persistent login across runs
 
 ---
 
@@ -704,6 +709,7 @@ mrtg-bandwidth-report/
 │   ├── sample_input_page2.png
 │   └── sample_output_xlsx.png
 ├── .env                        # Credentials (gitignored — create manually)
+├── .browser_data/              # Playwright session cookies (gitignored — auto-created)
 ├── .gitignore
 └── LICENSE
 ```
