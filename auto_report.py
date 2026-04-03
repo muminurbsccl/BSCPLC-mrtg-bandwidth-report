@@ -336,6 +336,7 @@ def generate_report(pdf_path: Path, date_str: str):
         ],
         capture_output=True,
         text=True,
+        timeout=240,  # 4 minutes max for OCR processing
     )
 
     if result.returncode != 0:
