@@ -14,7 +14,7 @@ A Python desktop tool that automatically extracts bandwidth usage data from MRTG
 2. **Image Conversion** — Converts each PDF page to high-resolution images using `pdf2image` + Poppler
 3. **OCR Extraction** — Runs Tesseract OCR to extract text from graph images (titles, statistics)
 4. **Stats Parsing** — Parses Inbound/Outbound Maximum values with automatic unit detection (G/M/k/bps)
-5. **OCR Correction** — Automatically detects and fixes common OCR decimal-drop errors (e.g. "2.93G" read as "293G") using the allocated bandwidth as a sanity ceiling
+5. **OCR Correction** — Two-layer auto-correction: (a) pre-conversion detection of dropped decimal points in unit-bearing values (e.g. "90911 M" → "909.11 M") using digit-count heuristics, and (b) post-conversion sanity checking against allocated bandwidth with per-direction suspect tracking to avoid over-correcting legitimate low-traffic readings
 6. **Graph-to-Row Mapping** — Matches each graph's client name to the correct spreadsheet row using configurable regex patterns + fuzzy token matching as fallback
 7. **Excel Generation** — Writes `MAX(inbound_max, outbound_max)` values into the template spreadsheet with traffic-light colour coding and cell borders, preserving all existing formulas. A post-save XML patch adds the `applyFill="1"` and `applyBorder="1"` attributes that openpyxl omits by default, ensuring fills and borders render correctly in Excel
 8. **Batch Processing** — Optionally process an entire directory of daily PDFs in one run (GUI Batch Mode tab or `--batch DIR` CLI flag); report dates are auto-detected from each PDF filename
@@ -118,8 +118,23 @@ python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All
 
 echo ""
 echo "=== Installation complete! ==="
+echo ""
+echo "--- GUI / CLI Mode ---"
 echo "Run:  python3 mrtg_bandwidth_report.py"
-echo "Auto: python3 auto_report.py  (after creating .env)"
+echo ""
+echo "--- Full Automation Setup ---"
+echo "1. Create a .env file in the project root:"
+echo "   OUTLOOK_EMAIL=your_email@example.com"
+echo "   OUTLOOK_PASSWORD=your_password"
+echo "   REPORT_RECIPIENT=recipient@example.com"
+echo "   TEMPLATE_PATH=/path/to/template.xlsx"
+echo ""
+echo "2. Test manually:  python3 auto_report.py"
+echo ""
+echo "3. Schedule daily (cron - runs at 12:05 AM):"
+echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $(pwd) && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
+echo ""
+echo "The pipeline: Outlook login → PDF download → OCR report → email delivery"
 ```
 
 ### Linux (Ubuntu / Debian)
@@ -159,8 +174,23 @@ python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All
 
 echo ""
 echo "=== Installation complete! ==="
+echo ""
+echo "--- GUI / CLI Mode ---"
 echo "Run:  python3 mrtg_bandwidth_report.py"
-echo "Auto: python3 auto_report.py  (after creating .env)"
+echo ""
+echo "--- Full Automation Setup ---"
+echo "1. Create a .env file in the project root:"
+echo "   OUTLOOK_EMAIL=your_email@example.com"
+echo "   OUTLOOK_PASSWORD=your_password"
+echo "   REPORT_RECIPIENT=recipient@example.com"
+echo "   TEMPLATE_PATH=/path/to/template.xlsx"
+echo ""
+echo "2. Test manually:  python3 auto_report.py"
+echo ""
+echo "3. Schedule daily (cron - runs at 12:05 AM):"
+echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $(pwd) && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
+echo ""
+echo "The pipeline: Outlook login → PDF download → OCR report → email delivery"
 ```
 
 ### Linux (Fedora / RHEL / CentOS)
@@ -194,8 +224,23 @@ python3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All
 
 echo ""
 echo "=== Installation complete! ==="
+echo ""
+echo "--- GUI / CLI Mode ---"
 echo "Run:  python3 mrtg_bandwidth_report.py"
-echo "Auto: python3 auto_report.py  (after creating .env)"
+echo ""
+echo "--- Full Automation Setup ---"
+echo "1. Create a .env file in the project root:"
+echo "   OUTLOOK_EMAIL=your_email@example.com"
+echo "   OUTLOOK_PASSWORD=your_password"
+echo "   REPORT_RECIPIENT=recipient@example.com"
+echo "   TEMPLATE_PATH=/path/to/template.xlsx"
+echo ""
+echo "2. Test manually:  python3 auto_report.py"
+echo ""
+echo "3. Schedule daily (cron - runs at 12:05 AM):"
+echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $(pwd) && python3 auto_report.py >> auto_report.log 2>&1\") | crontab -"
+echo ""
+echo "The pipeline: Outlook login → PDF download → OCR report → email delivery"
 ```
 
 ### Linux (Arch / Manjaro)
@@ -228,8 +273,23 @@ python -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All 
 
 echo ""
 echo "=== Installation complete! ==="
+echo ""
+echo "--- GUI / CLI Mode ---"
 echo "Run:  python mrtg_bandwidth_report.py"
-echo "Auto: python auto_report.py  (after creating .env)"
+echo ""
+echo "--- Full Automation Setup ---"
+echo "1. Create a .env file in the project root:"
+echo "   OUTLOOK_EMAIL=your_email@example.com"
+echo "   OUTLOOK_PASSWORD=your_password"
+echo "   REPORT_RECIPIENT=recipient@example.com"
+echo "   TEMPLATE_PATH=/path/to/template.xlsx"
+echo ""
+echo "2. Test manually:  python auto_report.py"
+echo ""
+echo "3. Schedule daily (cron - runs at 12:05 AM):"
+echo "   (crontab -l 2>/dev/null; echo \"5 0 * * * cd $(pwd) && python auto_report.py >> auto_report.log 2>&1\") | crontab -"
+echo ""
+echo "The pipeline: Outlook login → PDF download → OCR report → email delivery"
 ```
 
 ### Windows (PowerShell — recommended)
@@ -281,9 +341,24 @@ py -3 -c "import openpyxl, pdf2image, pytesseract, PIL, playwright; print('All P
 
 Write-Host ""
 Write-Host "=== Installation complete! ===" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "--- GUI / CLI Mode ---" -ForegroundColor Green
 Write-Host "Run:  py -3 mrtg_bandwidth_report.py"
-Write-Host "Auto: py -3 auto_report.py  (after creating .env)"
 Write-Host "  or: double-click run.bat"
+Write-Host ""
+Write-Host "--- Full Automation Setup ---" -ForegroundColor Green
+Write-Host "1. Create a .env file in the project root with:"
+Write-Host "   OUTLOOK_EMAIL=your_email@example.com"
+Write-Host "   OUTLOOK_PASSWORD=your_password"
+Write-Host "   REPORT_RECIPIENT=recipient@example.com"
+Write-Host "   TEMPLATE_PATH=D:\path\to\template.xlsx"
+Write-Host ""
+Write-Host "2. Test manually:  py -3 auto_report.py"
+Write-Host ""
+Write-Host "3. Schedule daily (run setup_scheduler.bat as Admin, or):"
+Write-Host "   schtasks /create /tn `"MRTG_Auto_Report`" /tr `"py -3 $PWD\auto_report.py`" /sc daily /st 00:05 /f"
+Write-Host ""
+Write-Host "Pipeline: Outlook login -> PDF download -> OCR report -> email delivery"
 ```
 
 ### Windows (Chocolatey — alternative)
@@ -309,7 +384,9 @@ py -3 -m pip install --upgrade pip
 py -3 -m pip install openpyxl pdf2image pytesseract Pillow playwright python-dotenv
 py -3 -m playwright install chromium
 
-Write-Host "Installation complete! Run: py -3 mrtg_bandwidth_report.py"
+Write-Host "Installation complete!" -ForegroundColor Cyan
+Write-Host "GUI/CLI: py -3 mrtg_bandwidth_report.py"
+Write-Host "Automation: Create .env, then py -3 auto_report.py (see full installer output above)"
 ```
 
 ---
@@ -449,7 +526,11 @@ This tool uses OCR to read text from graph images, which has inherent limitation
 - Unit letters (M/G/k) may be missed or misread by OCR — full unit strings (`Mbps`, `Gbps`, `kbps`) are also handled automatically
 - Common OCR character substitutions (`@` → `0`, `[` → `I`, `|` → `l`, `]` → `)`) are automatically corrected before pattern matching
 - **OCR-tolerant direction matching** — garbled direction keywords (`lnbound`, `0utbound`, `1nbound`) are detected and matched correctly
-- **Decimal-drop correction:** Values wildly exceeding allocated bandwidth (>10x) are automatically corrected by dividing until plausible (e.g. 293,000 Mbps → 14,560 Mbps); corrected cells are highlighted blue. A false-positive safeguard prevents over-correction: if only one traffic direction triggers the correction and the corrected value falls below the other direction's raw value, the correction is reverted (e.g. a legitimate 167.53 Mbps burst on a small-allocated link is preserved instead of being divided to 16.75 Mbps)
+- **Two-layer decimal-drop correction:**
+  - *Pre-conversion (digit-pattern)*: Detects dropped decimal points in values with units (e.g. OCR reads "90911 M" instead of "909.11 M") by examining digit counts — 4+ digits for Mbps, 3+ digits for Gbps — and reinserting the decimal at plausible positions. No allocated bandwidth needed.
+  - *Post-conversion (allocation-based)*: Values exceeding allocated bandwidth (>10x) are automatically divided until plausible (e.g. 293,000 Mbps → 14,560 Mbps). Corrected cells are highlighted blue.
+  - *Per-direction suspect tracking*: Each traffic direction (inbound/outbound) is independently tracked for missing units, so a correctly-parsed direction is never over-corrected because the other direction lost its unit.
+  - *False-positive safeguards*: (a) If only one direction triggers correction and the other direction had a valid unit reading, the correction is reverted — the valid reading is ground truth. (b) If both directions are "recovered" from near-zero values, both are reverted — this pattern indicates an idle link, not a double OCR error. (c) If only one direction is corrected and the result drops below the other direction's raw value, the correction is reverted to preserve legitimate traffic bursts.
 - **Duplicate row handling:** When two graphs map to the same spreadsheet row, the higher `MAX(in, out)` value wins. Enable **Warn duplicates** (GUI checkbox or `--warn-duplicates` CLI flag) to log each overwrite with both values and their source pages for review
 - **Cache cell accumulation:** Multiple cache graphs (e.g. Exabyte TEJ + DC + EDGENEXT) are summed rather than taking the maximum, for accurate totals
 - **Expanded interface detection:** Recognises `GigabitEthernet`, `Gi0/0`, `Te0/0`, `FortyGigE`, `TwentyFiveGig` in addition to `Bundle-Ether`, `TenGigE`, `HundredGigE`
@@ -479,14 +560,12 @@ The `auto_report.py` script fully automates the daily bandwidth report workflow 
 
 ### Automation Setup
 
-**1. Install automation dependencies:**
+> **Note:** If you ran one of the full installation scripts above, Playwright and python-dotenv are already installed. If not:
+> ```bash
+> pip install playwright python-dotenv && playwright install chromium
+> ```
 
-```bash
-pip install playwright python-dotenv
-playwright install chromium
-```
-
-**2. Create a `.env` file** in the project root (never committed to git):
+**1. Create a `.env` file** in the project root (never committed to git):
 
 ```
 OUTLOOK_EMAIL=your_email@example.com
@@ -495,25 +574,38 @@ REPORT_RECIPIENT=recipient@example.com
 TEMPLATE_PATH=D:\path\to\template.xlsx
 ```
 
-**3. Test it manually:**
+| Variable | Description |
+|----------|-------------|
+| `OUTLOOK_EMAIL` | Microsoft 365 / Outlook email address used to log in and send the report |
+| `OUTLOOK_PASSWORD` | Password for the Outlook account |
+| `REPORT_RECIPIENT` | Email address that receives the generated bandwidth report |
+| `TEMPLATE_PATH` | Absolute path to the previous day's `.xlsx` template file |
+
+**2. Test it manually:**
 
 ```bash
 python auto_report.py
 ```
 
-**4. Schedule it (Windows):**
+A Chromium browser window will open, log into Outlook, download the MRTG report email as PDF, run the OCR pipeline, and email the resulting `.xlsx` to the recipient.
 
-Run `setup_scheduler.bat` as Administrator, or manually:
+**3. Schedule daily execution:**
 
+**Windows** — run `setup_scheduler.bat` as Administrator, or:
 ```powershell
-schtasks /create /tn "MRTG_Auto_Report" /tr "python E:\app\Daily_BW_report\auto_report.py" /sc daily /st 00:05 /f
+schtasks /create /tn "MRTG_Auto_Report" /tr "py -3 C:\path\to\auto_report.py" /sc daily /st 00:05 /f
+```
+
+**macOS / Linux** — add a cron job (runs at 12:05 AM daily):
+```bash
+(crontab -l 2>/dev/null; echo "5 0 * * * cd /path/to/project && python3 auto_report.py >> auto_report.log 2>&1") | crontab -
 ```
 
 ### Automation Output
 
-- PDFs saved to `pdfs/` directory
-- Reports saved to `reports/` directory
-- Report emailed to the configured recipient via Outlook SMTP
+- PDFs saved to `pdfs/` directory (auto-created)
+- Reports saved to `reports/` directory (auto-created)
+- Report emailed to `REPORT_RECIPIENT` via Outlook SMTP (`smtp.office365.com:587`)
 
 ---
 

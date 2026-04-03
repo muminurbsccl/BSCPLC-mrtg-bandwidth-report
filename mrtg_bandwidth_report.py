@@ -245,6 +245,8 @@ def parse_graphs_from_text(text: str) -> list:
             "title": title,
             "inbound_max": in_max,
             "outbound_max": out_max,
+            "in_suspect": in_unitless,
+            "out_suspect": out_unitless,
             "suspect": (in_unitless or out_unitless),
         })
 
@@ -277,7 +279,7 @@ def _extract_maximum(text_block: str, direction: str) -> tuple:
                 val = float(val_str.replace(",", ""))
             except ValueError:
                 continue
-            return convert_to_mbps(val, unit), (unit == "")
+            return convert_to_mbps(val, unit, val_str), (unit == "")
 
     lines = text_block.split("\n")
     for i, line in enumerate(lines):
@@ -298,12 +300,52 @@ def _extract_maximum(text_block: str, direction: str) -> tuple:
                     val = float(val_str.replace(",", ""))
                 except ValueError:
                     continue
-                return convert_to_mbps(val, unit), (unit == "")
+                return convert_to_mbps(val, unit, val_str), (unit == "")
 
     return None, False
 
 
-def convert_to_mbps(value: float, unit: str) -> float:
+def _fix_ocr_dropped_decimal(val_str: str, value: float, unit: str) -> float:
+    """
+    Detect and fix OCR-dropped decimal points in parsed values.
+
+    MRTG graphs display values like "909.11 M" or "16.61 G". When OCR drops
+    the decimal point, we get "90911 M" or "1661 G" — integers that are
+    unreasonably large for the unit.
+
+    Heuristic: if the original string has no decimal point and the value
+    with unit produces an implausibly large Mbps result, try reinserting
+    the decimal at positions that yield a plausible MRTG reading.
+    """
+    if "." in val_str:
+        return value  # decimal is present, no fix needed
+
+    u = unit.upper() if unit else ""
+    digits = val_str.lstrip("-").replace(",", "")
+
+    # Only fix values with 4+ digits for M, or 3+ digits for G
+    # (MRTG rarely shows values > 999 M or 99 G without a decimal)
+    if u == "M" and len(digits) >= 4:
+        # Try inserting decimal 2 places from the right: 90911 -> 909.11
+        # Also try 1 place: 90911 -> 9091.1 (less likely)
+        for pos in (2, 1, 3):
+            if pos < len(digits):
+                candidate = float(digits[:-pos] + "." + digits[-pos:])
+                if candidate <= 50000:  # 50 Gbps is a reasonable single-link max
+                    log.info(f"    [OCR-FIX] Dropped decimal: {value} {u} -> {candidate} {u}")
+                    return candidate
+    elif u == "G" and len(digits) >= 3:
+        for pos in (2, 1):
+            if pos < len(digits):
+                candidate = float(digits[:-pos] + "." + digits[-pos:])
+                if candidate <= 100:  # 100 Gbps is a reasonable single-link max
+                    log.info(f"    [OCR-FIX] Dropped decimal: {value} {u} -> {candidate} {u}")
+                    return candidate
+
+    return value
+
+
+def convert_to_mbps(value: float, unit: str, val_str: str = "") -> float:
     """
     Convert MRTG value+unit to Megabits per second.
 
@@ -313,6 +355,10 @@ def convert_to_mbps(value: float, unit: str) -> float:
       k  = kbps  -> divide by 1000
       (none) = bps -> divide by 1,000,000
     """
+    # Fix OCR-dropped decimals before converting
+    if val_str:
+        value = _fix_ocr_dropped_decimal(val_str, value, unit)
+
     u = unit.upper() if unit else ""
     if u == "G":
         return round(value * 1000, 2)
@@ -570,6 +616,8 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None,
                         "desc": desc,
                         "page": page_num,
                         "suspect": g.get("suspect", False),
+                        "in_suspect": g.get("in_suspect", False),
+                        "out_suspect": g.get("out_suspect", False),
                         "extraction_failed": extraction_failed,
                     }
                 log.info(f"  MATCH: {desc} -> {row_ref} = {max_mbps:.2f} Mbps")
@@ -593,16 +641,18 @@ def extract_all_graphs(pdf_path: str, dpi: int = 250, progress_cb=None,
 # SECTION 4 — XLSX GENERATION
 # =====================================================================
 
-def _correct_value_pair(in_mbps: float, out_mbps: float, allocated: float, suspect: bool) -> tuple:
+def _correct_value_pair(in_mbps: float, out_mbps: float, allocated: float,
+                        in_suspect: bool, out_suspect: bool) -> tuple:
     """
     Auto-correct OCR decimal-drop errors using allocated bandwidth as sanity ceiling.
 
     Two failure modes handled:
       HIGH: OCR drops decimal in a G/M value  e.g. "2.93G" read as "293G" = 293,000 Mbps
-            Fix: divide by 10/100/1000 until value <= allocated * 1.5
+            Fix: divide by 10/100/1000 until value <= allocated
       LOW:  OCR drops decimal AND unit (unitless bps-rule applied)
             e.g. "37.294M" read as "37294" (no unit) -> /1M bps rule -> 0.037 Mbps
             Fix: reinterpret raw OCR number as kbps -> Mbps
+            Only applied to the direction that was actually unitless (per-direction suspect).
 
     Correction is applied independently to inbound and outbound, so the correct
     value from one direction is not lost when the other direction is wrong.
@@ -617,28 +667,34 @@ def _correct_value_pair(in_mbps: float, out_mbps: float, allocated: float, suspe
 
     def fix_high(val):
         # AUTO-CORRECT: values > 10x allocated are clearly impossible OCR errors.
-        # Values 3x–10x are suspicious but may be legitimate bursts — they are
-        # flagged with a WARNING log for manual review but are NOT auto-corrected.
-        # Values 1.5x–3x are highlighted yellow by the traffic-light fill only.
-        if val is None or val <= allocated * 10:
-            # Secondary flag: 3x–10x range — possible G→M unit-swap (e.g. "2.93 G"
-            # read as "293 M" when allocated is large enough to stay under 10x).
-            if val is not None and val > allocated * 3:
-                for div in (10, 100):
-                    candidate = round(val / div, 2)
-                    if 0 < candidate <= allocated:
-                        log.warning(
-                            f"    [OCR-SUSPECT] {val:.2f} Mbps is {val/allocated:.1f}x allocated — "
-                            f"possible decimal-drop OCR error (÷{div} would give {candidate:.2f} Mbps); "
-                            f"verify manually"
-                        )
-                        break
+        # Values 1.5x–10x: auto-correct if dividing by 10 or 100 yields a plausible
+        # value (within allocated), since OCR commonly drops a decimal point
+        # (e.g. "909.11 M" read as "90911 M").
+        # Values 1.5x–3x without a plausible correction are only highlighted yellow.
+        if val is None:
             return val, False
-        for div in (10, 100, 1000, 10000):
-            candidate = round(val / div, 2)
-            if candidate <= ceiling:
-                log.info(f"    [AUTO-CORRECT] Decimal-drop (high ÷{div}): {val:.2f} -> {candidate:.2f} Mbps")
-                return candidate, True
+        if val > allocated * 10:
+            for div in (10, 100, 1000, 10000):
+                candidate = round(val / div, 2)
+                if candidate <= allocated:
+                    log.info(f"    [AUTO-CORRECT] Decimal-drop (high ÷{div}): {val:.2f} -> {candidate:.2f} Mbps")
+                    return candidate, True
+            return val, False
+        if val > ceiling:
+            # 1.5x–10x range: auto-correct if ÷10 or ÷100 gives a plausible value
+            for div in (10, 100):
+                candidate = round(val / div, 2)
+                if 0 < candidate <= allocated:
+                    log.info(
+                        f"    [AUTO-CORRECT] Decimal-drop (mid ÷{div}): {val:.2f} -> {candidate:.2f} Mbps "
+                        f"({val/allocated:.1f}x allocated)"
+                    )
+                    return candidate, True
+            # No plausible correction found — warn but don't correct
+            log.warning(
+                f"    [OCR-SUSPECT] {val:.2f} Mbps is {val/allocated:.1f}x allocated — "
+                f"verify manually"
+            )
         return val, False
 
     def fix_low(val, is_suspect):
@@ -648,14 +704,19 @@ def _correct_value_pair(in_mbps: float, out_mbps: float, allocated: float, suspe
             return val, False
         # Reverse the /1M bps rule to recover the original OCR integer.
         raw = val * 1_000_000
+        # Use a tighter ceiling for low-value recovery: the recovered value should
+        # be well within allocated bandwidth (≤ allocated), not at burst levels.
+        # A near-zero value "recovered" to 144% of allocation is almost certainly
+        # a false positive (legitimate low traffic, not an OCR unit-drop).
+        low_ceiling = allocated
         # Attempt 1: raw is already Mbps (OCR dropped the 'M' unit but kept correct digits)
         # e.g. "751 M" -> OCR reads "751" -> bps -> raw=751 -> direct Mbps: 751
-        if 0 < raw <= ceiling:
+        if 0 < raw <= low_ceiling:
             log.info(f"    [AUTO-CORRECT] Decimal-drop (low): {val:.6f} -> {raw:.3f} Mbps (direct Mbps)")
             return round(raw, 3), True
         # Attempt 2: raw is in kbps (OCR dropped decimal, e.g. "37.294 M" -> "37294" -> bps -> raw=37294 -> /1000=37.294)
         candidate = round(raw / 1000, 3)
-        if 0 < candidate <= ceiling:
+        if 0 < candidate <= low_ceiling:
             log.info(f"    [AUTO-CORRECT] Decimal-drop (low): {val:.6f} -> {candidate:.3f} Mbps (kbps reinterpret)")
             return candidate, True
         return val, False
@@ -673,9 +734,26 @@ def _correct_value_pair(in_mbps: float, out_mbps: float, allocated: float, suspe
         new_out, fixed_out = out_mbps, False
 
     if not fixed_in:
-        new_in,  fixed_in  = fix_low(in_mbps,  suspect)
+        new_in,  fixed_in  = fix_low(in_mbps,  in_suspect)
     if not fixed_out:
-        new_out, fixed_out = fix_low(out_mbps, suspect)
+        new_out, fixed_out = fix_low(out_mbps, out_suspect)
+
+    # Revert fix_low when one direction was "recovered" but the other direction
+    # is trustworthy — either it had a valid unit (not suspect) or it has a
+    # normal reading above the floor. Indicates genuine low traffic, not OCR error.
+    if fixed_in and not fixed_out:
+        if not out_suspect or (out_mbps or 0) >= allocated * floor_ratio:
+            new_in, fixed_in = in_mbps, False
+    elif fixed_out and not fixed_in:
+        if not in_suspect or (in_mbps or 0) >= allocated * floor_ratio:
+            new_out, fixed_out = out_mbps, False
+
+    # If BOTH directions got fix_low'd, revert both — two simultaneous
+    # OCR unit drops is extremely unlikely; this pattern almost always
+    # indicates an idle link with legitimately tiny values.
+    if fixed_in and fixed_out:
+        new_in, fixed_in = in_mbps, False
+        new_out, fixed_out = out_mbps, False
 
     return new_in, new_out, (fixed_in or fixed_out)
 
@@ -827,7 +905,9 @@ def generate_report(template_path: str, extraction_data: dict, output_path: str,
                 in_mbps  = data.get("in_mbps",  mbps) or 0.0
                 out_mbps = data.get("out_mbps", mbps) or 0.0
                 new_in, new_out, corrected = _correct_value_pair(
-                    in_mbps, out_mbps, d_val, suspect
+                    in_mbps, out_mbps, d_val,
+                    data.get("in_suspect", suspect),
+                    data.get("out_suspect", suspect),
                 )
                 if corrected:
                     mbps = max(

@@ -2,5 +2,5 @@ openpyxl
 pdf2image
 pytesseract
 Pillow
-camoufox[geoip]
+playwright
 python-dotenv
