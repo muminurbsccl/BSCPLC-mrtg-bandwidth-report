@@ -22,7 +22,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -44,6 +44,7 @@ EMAIL_SUBJECT = "BSCPLC MRTG Report"
 SCRIPT_DIR = Path(__file__).parent
 PDF_DIR = SCRIPT_DIR / "pdfs"
 REPORT_DIR = SCRIPT_DIR / "reports"
+BROWSER_DATA_DIR = SCRIPT_DIR / ".browser_data"  # persistent session/cookies
 
 # Ensure Tesseract and Poppler are on PATH
 _TESSERACT_DIR = r"C:\Program Files\Tesseract-OCR"
@@ -68,27 +69,39 @@ log = logging.getLogger("auto_report")
 # Step 1: Login to Outlook Web
 # ---------------------------------------------------------------------------
 def login_outlook(page):
-    """Log into Outlook web with email and password."""
+    """Log into Outlook web with email and password.
+
+    Session cookies are saved/restored via Playwright storage state,
+    so the login page may auto-redirect without needing credentials.
+    """
     log.info("Navigating to Outlook...")
     page.goto("https://login.microsoftonline.com/")
     page.wait_for_load_state("load")
     time.sleep(2)
 
-    # Enter email
-    log.info("Entering email...")
-    page.fill('input[type="email"]', OUTLOOK_EMAIL)
-    page.click('input[type="submit"]')
-    page.wait_for_load_state("load")
-    time.sleep(3)
+    # Enter email (skip if session auto-redirected past this step)
+    email_field = page.locator('input[type="email"]')
+    if email_field.is_visible(timeout=5000):
+        log.info("Entering email...")
+        page.fill('input[type="email"]', OUTLOOK_EMAIL)
+        page.click('input[type="submit"]')
+        page.wait_for_load_state("load")
+        time.sleep(3)
+    else:
+        log.info("Email field not shown (session may be restored).")
 
-    # Enter password
-    log.info("Entering password...")
-    page.fill('input[type="password"]', OUTLOOK_PASSWORD)
-    page.click('input[type="submit"]')
-    page.wait_for_load_state("load")
-    time.sleep(3)
+    # Enter password (skip if SSO or session handles it)
+    password_field = page.locator('input[type="password"]')
+    if password_field.is_visible(timeout=5000):
+        log.info("Entering password...")
+        page.fill('input[type="password"]', OUTLOOK_PASSWORD)
+        page.click('input[type="submit"]')
+        page.wait_for_load_state("load")
+        time.sleep(3)
+    else:
+        log.info("Password field not shown (SSO or session restored).")
 
-    # "Stay signed in?" prompt — click Yes
+    # "Stay signed in?" prompt — click Yes (keeps session for future runs)
     try:
         page.click('input[id="idSIButton9"]', timeout=5000)
     except Exception:
@@ -117,10 +130,39 @@ def find_and_open_email(page):
     """Search for the latest BSCPLC MRTG Report email and open it."""
     log.info(f"Searching for email with subject: {EMAIL_SUBJECT}")
 
-    # Use Outlook search
-    search_box = page.locator('input[aria-label="Search"]').first
-    if not search_box.is_visible(timeout=10000):
-        search_box = page.locator('[id="topSearchInput"]').first
+    # Debug: save screenshot to diagnose search box issues
+    page.screenshot(path=str(Path(__file__).parent / "debug_before_search.png"))
+
+    # Use Outlook search — try multiple selectors for different Outlook versions
+    search_box = None
+    for selector in [
+        'input[aria-label="Search"]',
+        '[id="topSearchInput"]',
+        'input[placeholder*="Search"]',
+        '[role="search"] input',
+        'button[aria-label="Search"]',
+    ]:
+        try:
+            loc = page.locator(selector).first
+            if loc.is_visible(timeout=5000):
+                search_box = loc
+                log.info(f"Found search box: {selector}")
+                break
+        except Exception:
+            continue
+
+    if not search_box:
+        # Try clicking a search button/icon that expands into a search input
+        try:
+            page.locator('button[aria-label="Search"]').first.click(timeout=5000)
+            time.sleep(2)
+            search_box = page.locator('input[aria-label="Search"], input[placeholder*="Search"]').first
+        except Exception:
+            pass
+
+    if not search_box:
+        raise RuntimeError("Could not find Outlook search box. See debug_before_search.png")
+
     search_box.click()
     search_box.fill(EMAIL_SUBJECT)
     page.keyboard.press("Enter")
@@ -144,12 +186,45 @@ def print_email_to_pdf(page, context, pdf_path: Path):
     """Click three-dot menu → Print in Outlook, then save the print preview as PDF."""
     log.info("Opening Print preview...")
 
-    # Scroll down to load all embedded images in the email
-    for _ in range(15):
+    # Scroll the email body to force-load ALL embedded graph images.
+    # Outlook web lazy-loads images — we must scroll through the entire
+    # email content to trigger loading of every graph.
+    # Use JavaScript to scroll the email reading pane container directly,
+    # which is more reliable than keyboard PageDown on the wrong element.
+    log.info("Scrolling email to load all graph images...")
+    page.evaluate("""() => {
+        // Find the email body scrollable container
+        const containers = [
+            document.querySelector('[role="main"] [data-app-section="ConversationContainer"]'),
+            document.querySelector('[role="main"] .customScrollBar'),
+            document.querySelector('[role="main"]'),
+            document.querySelector('.ReadingPaneContainerV2'),
+        ].filter(Boolean);
+        const el = containers[0] || document.scrollingElement || document.documentElement;
+        // Scroll to bottom in steps to trigger lazy image loading
+        const totalHeight = el.scrollHeight;
+        const step = 500;
+        for (let y = 0; y <= totalHeight; y += step) {
+            el.scrollTop = y;
+        }
+        // Back to top
+        el.scrollTop = 0;
+    }""")
+    time.sleep(3)
+
+    # Also do keyboard scrolling as a fallback (covers cases where
+    # the JS scroll target wasn't the right container)
+    for _ in range(30):
         page.keyboard.press("PageDown")
-        time.sleep(0.5)
+        time.sleep(0.3)
     page.keyboard.press("Home")
     time.sleep(2)
+
+    # Wait for all images to finish loading
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:
+        time.sleep(3)  # fallback wait
 
     # Click three-dot "More actions" button near Reply/Reply all/Forward
     # Try multiple selectors
@@ -208,11 +283,11 @@ def print_email_to_pdf(page, context, pdf_path: Path):
         time.sleep(5)
 
         # Scroll to load all content in print preview
-        for _ in range(10):
+        for _ in range(30):
             print_page.keyboard.press("PageDown")
             time.sleep(0.3)
         print_page.keyboard.press("Home")
-        time.sleep(1)
+        time.sleep(2)
 
         log.info(f"Print preview URL: {print_page.url}")
         print_page.screenshot(path=str(SCRIPT_DIR / "debug_print_preview.png"), full_page=True)
@@ -317,19 +392,26 @@ def email_report(report_path: Path, date_str: str):
 # Main pipeline
 # ---------------------------------------------------------------------------
 def main():
-    today = datetime.now().strftime("%d %B %Y")
-    log.info(f"=== MRTG Auto Report Pipeline — {today} ===")
+    # The MRTG email contains graphs for the PREVIOUS day (24h ending ~midnight).
+    # Use yesterday's date for the PDF filename and report title.
+    yesterday = datetime.now() - timedelta(days=1)
+    report_date = yesterday.strftime("%d %B %Y")
+    log.info(f"=== MRTG Auto Report Pipeline — report for {report_date} ===")
 
     # Create output directories
     PDF_DIR.mkdir(exist_ok=True)
     REPORT_DIR.mkdir(exist_ok=True)
 
-    pdf_path = PDF_DIR / f"MRTG_Report_{datetime.now().strftime('%Y-%m-%d')}.pdf"
+    pdf_path = PDF_DIR / f"MRTG_Report_{yesterday.strftime('%Y-%m-%d')}.pdf"
 
     # --- Browser automation using Playwright Chromium ---
+    # Save/restore session cookies so login is skipped on subsequent runs.
+    storage_state_path = BROWSER_DATA_DIR / "storage_state.json"
+    BROWSER_DATA_DIR.mkdir(exist_ok=True)
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
-        context = browser.new_context(
+        ctx_opts = dict(
             viewport={"width": 1920, "height": 1080},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -337,19 +419,25 @@ def main():
                 "Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
             ),
         )
+        # Restore previous session if available
+        if storage_state_path.exists():
+            ctx_opts["storage_state"] = str(storage_state_path)
+        context = browser.new_context(**ctx_opts)
         page = context.new_page()
 
         login_outlook(page)
         find_and_open_email(page)
         print_email_to_pdf(page, context, pdf_path)
 
+        # Save session cookies for next run
+        context.storage_state(path=str(storage_state_path))
         browser.close()
 
     # --- Report generation ---
-    report_path = generate_report(pdf_path, today)
+    report_path = generate_report(pdf_path, report_date)
 
     # --- Email delivery ---
-    email_report(report_path, today)
+    email_report(report_path, report_date)
 
     log.info("=== Pipeline complete ===")
 

@@ -8,6 +8,7 @@ build/
 *.xlsx
 !screenshots/*.png
 .env
+.browser_data/
 .venv/
 env/
 venv/
