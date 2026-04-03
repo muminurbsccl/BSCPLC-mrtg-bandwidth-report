@@ -324,6 +324,15 @@ def generate_report(pdf_path: Path, date_str: str):
     output_name = f"Bandwidth Report (MAX) For {date_str}.xlsx"
     output_path = REPORT_DIR / output_name
 
+    # Remove Excel lock files that block writing (left by crashed Excel or previous runs)
+    lock_file = REPORT_DIR / f"~${output_name}"
+    if lock_file.exists():
+        log.info(f"Removing stale lock file: {lock_file}")
+        lock_file.unlink()
+
+    # Run OCR subprocess. Use subprocess.DEVNULL for stdin and pipe stderr only.
+    # stdout is inherited (printed to console) to avoid pipe buffer deadlock
+    # that occurs with capture_output=True on large OCR output (~25 pages).
     result = subprocess.run(
         [
             sys.executable,
@@ -334,17 +343,17 @@ def generate_report(pdf_path: Path, date_str: str):
             "--date", date_str,
             "--output", str(output_path),
         ],
-        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
         timeout=240,  # 4 minutes max for OCR processing
     )
 
     if result.returncode != 0:
-        log.error(f"Report generation failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
-        raise RuntimeError(f"Report generation failed: {result.stdout} {result.stderr}")
+        log.error(f"Report generation failed:\nSTDERR: {result.stderr}")
+        raise RuntimeError(f"Report generation failed: {result.stderr}")
 
     log.info(f"Report generated: {output_path}")
-    log.info(result.stdout)
     return output_path
 
 
@@ -430,9 +439,19 @@ def main():
         find_and_open_email(page)
         print_email_to_pdf(page, context, pdf_path)
 
-        # Save session cookies for next run
-        context.storage_state(path=str(storage_state_path))
+        # Save session cookies for next run, then close browser quickly
+        try:
+            context.storage_state(path=str(storage_state_path))
+        except Exception as e:
+            log.warning(f"Could not save session state: {e}")
+        # Force-close all pages first to speed up browser.close()
+        for p_page in context.pages:
+            try:
+                p_page.close()
+            except Exception:
+                pass
         browser.close()
+        log.info("Browser closed.")
 
     # --- Report generation ---
     report_path = generate_report(pdf_path, report_date)
