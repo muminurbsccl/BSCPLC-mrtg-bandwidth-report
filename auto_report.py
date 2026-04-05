@@ -15,9 +15,11 @@ Then run: playwright install chromium
 import os
 import sys
 import time
+import signal
 import smtplib
 import logging
 import subprocess
+import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -330,9 +332,8 @@ def generate_report(pdf_path: Path, date_str: str):
         log.info(f"Removing stale lock file: {lock_file}")
         lock_file.unlink()
 
-    # Run OCR subprocess. Use subprocess.DEVNULL for stdin and pipe stderr only.
-    # stdout is inherited (printed to console) to avoid pipe buffer deadlock
-    # that occurs with capture_output=True on large OCR output (~25 pages).
+    # Run OCR subprocess with inherited stdout/stderr (no pipes = no deadlock).
+    # The OCR output prints directly to the console.
     result = subprocess.run(
         [
             sys.executable,
@@ -344,14 +345,11 @@ def generate_report(pdf_path: Path, date_str: str):
             "--output", str(output_path),
         ],
         stdin=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
         timeout=240,  # 4 minutes max for OCR processing
     )
 
     if result.returncode != 0:
-        log.error(f"Report generation failed:\nSTDERR: {result.stderr}")
-        raise RuntimeError(f"Report generation failed: {result.stderr}")
+        raise RuntimeError("Report generation failed — see output above.")
 
     log.info(f"Report generated: {output_path}")
     return output_path
@@ -419,8 +417,9 @@ def main():
     storage_state_path = BROWSER_DATA_DIR / "storage_state.json"
     BROWSER_DATA_DIR.mkdir(exist_ok=True)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+    _playwright = sync_playwright().start()
+    try:
+        browser = _playwright.chromium.launch(headless=False)
         ctx_opts = dict(
             viewport={"width": 1920, "height": 1080},
             user_agent=(
@@ -439,19 +438,35 @@ def main():
         find_and_open_email(page)
         print_email_to_pdf(page, context, pdf_path)
 
-        # Save session cookies for next run, then close browser quickly
+        # PDF is saved — browser is no longer needed.
+        # Save session cookies, then kill the browser immediately in background.
+        # Do NOT wait for browser.close() — it hangs for 8+ minutes on heavy pages.
         try:
             context.storage_state(path=str(storage_state_path))
-        except Exception as e:
-            log.warning(f"Could not save session state: {e}")
-        # Force-close all pages first to speed up browser.close()
-        for p_page in context.pages:
+        except Exception:
+            pass
+
+        # Kill browser process tree in background — don't block the pipeline
+        def _kill_browser():
             try:
-                p_page.close()
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "chromium.exe", "/T"],
+                    capture_output=True, timeout=10,
+                )
             except Exception:
                 pass
-        browser.close()
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+        threading.Thread(target=_kill_browser, daemon=True).start()
         log.info("Browser closed.")
+    finally:
+        try:
+            _playwright.stop()
+        except Exception:
+            pass  # Browser was force-killed — suppress cleanup errors
 
     # --- Report generation ---
     report_path = generate_report(pdf_path, report_date)
