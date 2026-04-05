@@ -73,5 +73,5 @@ if defined TESSERACT set "PATH=%PATH%;%TESSERACT%"
 if defined POPPLER   set "PATH=%PATH%;%POPPLER%"
 
 :: --- Launch ---
-py -3.11 "%~dp0mrtg_bandwidth_report.py"
+py -3 "%~dp0mrtg_bandwidth_report.py"
 if errorlevel 1 pause

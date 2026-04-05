@@ -9,7 +9,7 @@ echo Runs daily at 12:05 AM
 
 schtasks /create ^
     /tn "MRTG_Auto_Report" ^
-    /tr "py -3.11 \"%~dp0auto_report.py\"" ^
+    /tr "py -3 \"%~dp0auto_report.py\"" ^
     /sc daily ^
     /st 00:05 ^
     /rl HIGHEST ^
