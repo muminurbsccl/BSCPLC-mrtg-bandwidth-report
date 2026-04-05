@@ -439,28 +439,23 @@ def main():
         print_email_to_pdf(page, context, pdf_path)
 
         # PDF is saved — browser is no longer needed.
-        # Save session cookies, then kill the browser immediately in background.
-        # Do NOT wait for browser.close() — it hangs for 8+ minutes on heavy pages.
-        try:
-            context.storage_state(path=str(storage_state_path))
-        except Exception:
-            pass
-
-        # Kill browser process tree in background — don't block the pipeline
-        def _kill_browser():
+        # Save session cookies in background, kill browser immediately.
+        def _save_session():
             try:
-                subprocess.run(
-                    ["taskkill", "/F", "/IM", "chromium.exe", "/T"],
-                    capture_output=True, timeout=10,
-                )
-            except Exception:
-                pass
-            try:
-                browser.close()
+                context.storage_state(path=str(storage_state_path))
             except Exception:
                 pass
 
-        threading.Thread(target=_kill_browser, daemon=True).start()
+        save_thread = threading.Thread(target=_save_session, daemon=True)
+        save_thread.start()
+        save_thread.join(timeout=10)  # wait up to 10s for session save
+
+        # Kill browser synchronously — must complete before pipeline continues
+        log.info("Closing browser...")
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "chromium.exe", "/T"],
+            capture_output=True, timeout=10,
+        )
         log.info("Browser closed.")
     finally:
         try:
