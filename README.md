@@ -694,8 +694,9 @@ schtasks /create /tn "MRTG_Auto_Report" /tr "py -3 C:\path\to\auto_report.py" /s
 mrtg-bandwidth-report/
 ├── mrtg_bandwidth_report.py    # Main script (GUI + CLI)
 ├── auto_report.py              # Automated daily pipeline (email → PDF → OCR → report → email)
-├── run.bat                     # Windows launcher (auto-detects Tesseract + Poppler)
-├── setup_scheduler.bat         # One-click Windows Task Scheduler setup
+├── run.bat                     # Windows launcher for GUI/CLI (auto-detects Tesseract + Poppler)
+├── auto_run.bat                # Windows launcher for automated pipeline (Outlook → PDF → OCR → email)
+├── setup_scheduler.bat         # One-click Windows Task Scheduler setup (schedules auto_run.bat daily)
 ├── requirements.txt            # Python dependencies
 ├── tests/
 │   ├── __init__.py
